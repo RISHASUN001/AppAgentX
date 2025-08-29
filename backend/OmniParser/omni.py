@@ -15,7 +15,14 @@ import uvicorn
 app = FastAPI()
 
 # 默认设备
-device = 'cuda:0'
+import torch
+# Mac M-series optimizations
+if torch.backends.mps.is_available():
+    device = 'mps'
+elif torch.cuda.is_available():
+    device = 'cuda:0'
+else:
+    device = 'cpu'
 
 # 初始化模型，只加载一次
 yolo_model_path = 'weights/icon_detect_v1_5/best.pt'

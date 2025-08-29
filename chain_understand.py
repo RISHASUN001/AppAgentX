@@ -5,8 +5,12 @@ from langchain_core.runnables import RunnablePassthrough
 from pydantic import BaseModel, Field, SecretStr
 import json
 import os
+from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from data.graph_db import Neo4jDatabase
+
+# Load environment variables from .env file
+load_dotenv()
 import config
 
 os.environ["LANGCHAIN_TRACING_V2"] = config.LANGCHAIN_TRACING_V2

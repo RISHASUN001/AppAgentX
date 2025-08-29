@@ -6,7 +6,11 @@ import subprocess
 from time import sleep
 from typing import Dict
 import requests
+from dotenv import load_dotenv
 from langchain_core.tools import tool
+
+# Load environment variables from .env file
+load_dotenv()
 import config  # Import configuration module
 
 

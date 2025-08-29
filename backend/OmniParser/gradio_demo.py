@@ -29,11 +29,18 @@ MARKDOWN = """
 OmniParser is a screen parsing tool to convert general GUI screen to structured elements. 
 """
 
-DEVICE = torch.device('cuda:1')
+import torch
+# Mac M-series optimizations
+if torch.backends.mps.is_available():
+    DEVICE = torch.device('mps')
+elif torch.cuda.is_available():
+    DEVICE = torch.device('cuda:1')
+else:
+    DEVICE = torch.device('cpu')
 
 # @spaces.GPU
 # @torch.inference_mode()
-# @torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+# @torch.autocast(device_type="cuda", dtype=torch.bfloat16)  # Commented out for Mac/CPU compatibility
 def process(
     image_input,
     box_threshold,

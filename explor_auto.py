@@ -1,25 +1,43 @@
+
+
+from dotenv import load_dotenv
+load_dotenv()
+import os
+import json
+import base64
+import datetime
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import StateGraph, START, END
 from langgraph.prebuilt import create_react_agent
 from langgraph.types import RetryPolicy
 from pydantic import SecretStr
 from data.State import State
 from tool.screen_content import *
+import config
+
+
+
+
 
 os.environ["LANGCHAIN_TRACING_V2"] = config.LANGCHAIN_TRACING_V2
 os.environ["LANGCHAIN_ENDPOINT"] = config.LANGCHAIN_ENDPOINT
 os.environ["LANGCHAIN_API_KEY"] = config.LANGCHAIN_API_KEY
-os.environ["LANGCHAIN_PROJECT"] = config.LANGCHAIN_PROJECT
+os.environ["GOOGLE_API_KEY"] = config.GEMINI_API_KEY  # Ensure Gemini API key is picked up
 
-model = ChatOpenAI(
-    openai_api_base=config.LLM_BASE_URL,
-    openai_api_key=SecretStr(config.LLM_API_KEY),
-    model_name=config.LLM_MODEL,
-    request_timeout=config.LLM_REQUEST_TIMEOUT,
-    max_retries=config.LLM_MAX_RETRIES,
-    max_tokens=config.LLM_MAX_TOKEN,
+
+
+
+print('GEMINI_API_KEY:', os.getenv("GEMINI_API_KEY"))
+print('LLM_MODEL:', os.getenv("LLM_MODEL"))
+
+model = ChatGoogleGenerativeAI(
+    google_api_key=os.getenv("GEMINI_API_KEY"),
+    model=os.getenv("LLM_MODEL"),
+    max_output_tokens=int(os.getenv("LLM_MAX_TOKEN", 1500)),
 )
+
+print('Gemini model object:', model)
 
 
 def tsk_setting(state: State):

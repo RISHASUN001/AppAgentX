@@ -41,7 +41,13 @@ class BatchResponse(BaseModel):
 class ExtractorConfig:
     def __init__(self, model_config: ModelConfig):
         self.model_name = model_config.model_name
-        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        # Mac M-series optimizations
+        if torch.backends.mps.is_available():
+            self.device = 'mps'
+        elif torch.cuda.is_available():
+            self.device = 'cuda'
+        else:
+            self.device = 'cpu'
         
         # 创建模型
         try:

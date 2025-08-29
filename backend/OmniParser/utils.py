@@ -23,11 +23,6 @@ reader = easyocr.Reader(['en'])
 paddle_ocr = PaddleOCR(
     lang='en',  # other lang also available
     use_angle_cls=False,
-    use_gpu=False,  # using cuda will conflict with pytorch in the same process
-    show_log=False,
-    max_batch_size=1024,
-    use_dilation=True,  # improves accuracy
-    det_db_score_mode='slow',  # improves accuracy
     rec_batch_num=1024)
 import time
 import base64
@@ -45,7 +40,13 @@ import torchvision.transforms as T
 
 def get_caption_model_processor(model_name, model_name_or_path="Salesforce/blip2-opt-2.7b", device=None):
     if not device:
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+        # Mac M-series optimizations
+        if torch.backends.mps.is_available():
+            device = "mps"
+        elif torch.cuda.is_available():
+            device = "cuda"
+        else:
+            device = "cpu"
     if model_name == "blip2":
         from transformers import Blip2Processor, Blip2ForConditionalGeneration
         processor = Blip2Processor.from_pretrained("Salesforce/blip2-opt-2.7b")
@@ -102,7 +103,7 @@ def get_parsed_content_icon(filtered_boxes, starting_idx, image_source, caption_
     for i in range(0, len(croped_pil_image), batch_size):
         start = time.time()
         batch = croped_pil_image[i:i+batch_size]
-        if model.device.type == 'cuda':
+        if model.device.type in ['cuda', 'mps']:
             inputs = processor(images=batch, text=[prompt]*len(batch), return_tensors="pt").to(device=device, dtype=torch.float16)
         else:
             inputs = processor(images=batch, text=[prompt]*len(batch), return_tensors="pt").to(device=device)

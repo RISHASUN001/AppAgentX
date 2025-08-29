@@ -4,11 +4,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict
 from uuid import uuid4
-import config
+from dotenv import load_dotenv
 from data.State import State
 from data.graph_db import Neo4jDatabase
 from data.vector_db import VectorStore, VectorData, NodeType
 from tool.img_tool import element_img, extract_features
+
+# Load environment variables from .env file
+load_dotenv()
+import config
 
 
 def generate_short_md5(input_string, length=8):

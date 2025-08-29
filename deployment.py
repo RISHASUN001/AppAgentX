@@ -1,10 +1,16 @@
 import time
 from typing import Any, Optional, Tuple
+from dotenv import load_dotenv
+import os
+
+# Load environment variables from .env file
+load_dotenv()
+import config
 
 from langchain.prompts import ChatPromptTemplate
 from langchain.schema.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import JsonOutputParser, StrOutputParser
-from langchain_openai import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import create_react_agent
 from pydantic import SecretStr
@@ -19,13 +25,11 @@ os.environ["LANGCHAIN_ENDPOINT"] = config.LANGCHAIN_ENDPOINT
 os.environ["LANGCHAIN_API_KEY"] = config.LANGCHAIN_API_KEY
 os.environ["LANGCHAIN_PROJECT"] = "DeploymentExecution"
 
-model = ChatOpenAI(
-    openai_api_base=config.LLM_BASE_URL,
-    openai_api_key=SecretStr(config.LLM_API_KEY),
-    model_name=config.LLM_MODEL,
-    request_timeout=config.LLM_REQUEST_TIMEOUT,
-    max_retries=config.LLM_MAX_RETRIES,
-    max_tokens=config.LLM_MAX_TOKEN,
+model = ChatGoogleGenerativeAI(
+    google_api_key=config.GEMINI_API_KEY,
+    model=config.LLM_MODEL,
+    max_output_tokens=config.LLM_MAX_TOKEN,
+    # Add other Gemini-specific parameters if needed
 )
 
 URI = config.Neo4j_URI
