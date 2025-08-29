@@ -2,13 +2,9 @@ import base64
 from io import BytesIO
 from typing import Union
 from PIL import Image
-from dotenv import load_dotenv
 from data.graph_db import Neo4jDatabase
 from data.vector_db import VectorStore, NodeType
 from typing import Optional
-
-# Load environment variables from .env file
-load_dotenv()
 import config  # Import configuration module
 
 

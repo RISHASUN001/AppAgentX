@@ -3,11 +3,7 @@ import json
 import os
 import threading
 from queue import Queue
-from dotenv import load_dotenv
 import gradio as gr
-
-# Load environment variables from .env file
-load_dotenv()
 import config
 from explor_auto import run_task
 from chain_evolve import evolve_chain_to_action

@@ -6,12 +6,8 @@ from typing import Dict, Union, List, IO
 import numpy as np
 import requests
 from PIL import Image
-from dotenv import load_dotenv
 from langchain_core.tools import tool
 from scipy.optimize import linear_sum_assignment
-
-# Load environment variables from .env file
-load_dotenv()
 import config
 
 

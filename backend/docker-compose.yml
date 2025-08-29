@@ -2,7 +2,6 @@ version: '3'
 
 services:
   image-embedding:
-    platform: linux/amd64
     build:
       context: ./ImageEmbedding
       dockerfile: Dockerfile
@@ -10,11 +9,16 @@ services:
       - "8001:8001"
     volumes:
       - ./ImageEmbedding:/app
-  # Removed GPU/NVIDIA requirements for Mac compatibility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [ gpu ]
     restart: unless-stopped
 
   omni-parser:
-    platform: linux/amd64
     build:
       context: ./OmniParser
       dockerfile: Dockerfile
@@ -23,5 +27,11 @@ services:
     volumes:
       - ./OmniParser:/app
       - ./OmniParser/weights:/app/weights
-  # Removed GPU/NVIDIA requirements for Mac compatibility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [ gpu ]
     restart: unless-stopped

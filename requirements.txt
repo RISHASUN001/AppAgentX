@@ -18,4 +18,3 @@ pure-python-adb
 asyncio
 aiohttp
 lxml
-langchain-google-genai
