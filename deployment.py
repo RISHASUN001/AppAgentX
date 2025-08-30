@@ -844,9 +844,9 @@ Each step of the operation should move toward completing the user's goal task.""
                 print(f"   Bbox appears to be absolute pixels, using as-is")
                 x = int(bbox[0])
                 y = int(bbox[1])
-                element_width = int(bbox[2] - bbox[0])
-                element_height = int(bbox[3] - bbox[1])
-            else:  # Relative coordinates (0-1)
+                element_width = int(bbox[2] - bbox[0]) if bbox[2] > bbox[0] else int(bbox[2])
+                element_height = int(bbox[3] - bbox[1]) if bbox[3] > bbox[1] else int(bbox[3])
+            else:  # Relative coordinates (0-1) - always treat as corner-based [x1, y1, x2, y2]
                 print(f"   Bbox appears to be relative coordinates, converting to absolute")
                 x = int(bbox[0] * width)
                 y = int(bbox[1] * height)
@@ -1044,31 +1044,14 @@ def _get_element_coordinates(element: Dict, device_width: int, device_height: in
             print(f"   Bbox appears to be absolute pixels")
             x = int(bbox[0])
             y = int(bbox[1])
-            width = int(bbox[2] - bbox[0])
-            height = int(bbox[3] - bbox[1])
-        else:  # Relative coordinates (0-1)
-            print(f"   Bbox appears to be relative coordinates")
-            # IMPORTANT: Check if this is a center-based bbox or corner-based
-            # If bbox values are very small (like 0.1-0.9), they're likely center-based
-            # If they're larger (like 0.3-0.7), they're likely corner-based
-            if max(bbox) < 0.5:  # Likely center-based bbox
-                print(f"   Bbox appears to be center-based, converting to corner-based")
-                center_x_rel = bbox[0]
-                center_y_rel = bbox[1]
-                half_width_rel = bbox[2] / 2
-                half_height_rel = bbox[3] / 2
-                
-                # Convert to corner-based coordinates
-                x = int((center_x_rel - half_width_rel) * device_width)
-                y = int((center_y_rel - half_height_rel) * device_height)
-                width = int(bbox[2] * device_width)
-                height = int(bbox[3] * device_height)
-            else:  # Corner-based bbox
-                print(f"   Bbox appears to be corner-based")
-                x = int(bbox[0] * device_width)
-                y = int(bbox[1] * device_height)
-                width = int((bbox[2] - bbox[0]) * device_width)
-                height = int((bbox[3] - bbox[1]) * device_height)
+            width = int(bbox[2] - bbox[0]) if bbox[2] > bbox[0] else int(bbox[2])
+            height = int(bbox[3] - bbox[1]) if bbox[3] > bbox[1] else int(bbox[3])
+        else:  # Relative coordinates (0-1) - always treat as corner-based [x1, y1, x2, y2]
+            print(f"   Bbox appears to be relative coordinates (corner-based)")
+            x = int(bbox[0] * device_width)
+            y = int(bbox[1] * device_height)
+            width = int((bbox[2] - bbox[0]) * device_width)
+            height = int((bbox[3] - bbox[1]) * device_height)
     else:
         # Use absolute coordinates if available
         x = element.get("x", 0)
