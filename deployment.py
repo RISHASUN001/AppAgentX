@@ -34,7 +34,33 @@ model = ChatGoogleGenerativeAI(
 
 URI = config.Neo4j_URI
 AUTH = config.Neo4j_AUTH
-db = Neo4jDatabase(URI, AUTH)
+
+
+
+# Try alternative URI schemes for Neo4j Aura if routing fails
+alternative_uris = []
+if URI:
+    alternative_uris.append(URI)  # Original URI
+    if URI.startswith("neo4j+s://"):
+        # Try neo4j+ssc:// (self-signed certificate) for SSL issues
+        ssc_uri = URI.replace("neo4j+s://", "neo4j+ssc://")
+        alternative_uris.append(ssc_uri)
+        # Try bolt+ssc:// instead of bolt+s:// for SSL issues
+        bolt_ssc_uri = URI.replace("neo4j+s://", "bolt+ssc://")
+        alternative_uris.append(bolt_ssc_uri)
+
+db = None
+for attempt, uri in enumerate(alternative_uris, 1):
+    try:
+        print(f"[Deployment] Attempt {attempt}: Trying URI {uri}")
+        db = Neo4jDatabase(uri, AUTH)
+        print(f"[Deployment] Successfully connected to Neo4j using {uri}")
+        break
+    except Exception as e:
+        print(f"[Deployment] Attempt {attempt} failed with URI {uri}: {e}")
+        if attempt == len(alternative_uris):
+            print("[Deployment] All connection attempts failed.")
+            raise
 
 vector_db = VectorStore(api_key=config.PINECONE_API_KEY)
 

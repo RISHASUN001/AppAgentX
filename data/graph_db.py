@@ -6,11 +6,57 @@ import json
 
 class Neo4jDatabase:
     def __init__(self, uri: str, auth: tuple):
-        self.driver = GraphDatabase.driver(uri, auth=auth)
+        # For Neo4j Aura connections, the +s scheme already includes encryption settings
+        if uri.startswith("neo4j+s://") or uri.startswith("neo4j+ssc://") or uri.startswith("bolt+s://") or uri.startswith("bolt+ssc://"):
+            # For secure connections, don't pass encrypted/trust parameters as they're implied in the URI
+            self.driver = GraphDatabase.driver(
+                uri, 
+                auth=auth,
+                max_connection_lifetime=30 * 60,  # 30 minutes
+                max_connection_pool_size=50,
+                connection_acquisition_timeout=60  # 60 seconds
+            )
+        else:
+            # For non-secure connections, can add encryption settings if needed
+            self.driver = GraphDatabase.driver(uri, auth=auth)
         self.verify_connectivity()
 
     def verify_connectivity(self):
-        self.driver.verify_connectivity()
+        try:
+            self.driver.verify_connectivity()
+        except Exception as e:
+            print(f"Neo4j connectivity verification failed: {e}")
+            # Try alternative connection approach for Aura
+            if "routing information" in str(e).lower():
+                print("This appears to be a Neo4j Aura routing issue.")
+                print("Common causes:")
+                print("1. Neo4j Aura database is paused/sleeping")
+                print("2. Network connectivity issues")
+                print("3. Database credentials have expired")
+                print("4. Database instance is not running")
+                print("Please check your Neo4j Aura console and ensure the database is running.")
+                
+                # Try alternative direct connection without routing
+                print("Attempting alternative direct connection method...")
+                try:
+                    # Try a simple session without routing
+                    with self.driver.session(database="neo4j") as session:
+                        result = session.run("RETURN 1 as test")
+                        record = result.single()
+                        if record and record["test"] == 1:
+                            print("Alternative connection method successful")
+                            return
+                except Exception as alt_e:
+                    print(f"Alternative connection also failed: {alt_e}")
+                
+                print("Unable to establish connection to Neo4j database.")
+                print("Please verify:")
+                print("- Database is running in Neo4j Aura console")
+                print("- Credentials are correct")
+                print("- Network connectivity is available")
+                raise e
+            else:
+                raise e
 
     def close(self):
         self.driver.close()

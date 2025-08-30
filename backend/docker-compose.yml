@@ -1,5 +1,3 @@
-version: '3'
-
 services:
   image-embedding:
     platform: linux/amd64

@@ -15,19 +15,27 @@ import config  # Import configuration module
 
 
 # Define a function to execute ADB commands
-def execute_adb(adb_command):
-    result = subprocess.run(
-        adb_command,
-        shell=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    if result.returncode == 0:
-        return result.stdout.strip()
-    print(f"Command execution failed: {adb_command}")
-    print(result.stderr)
-    return "ERROR"
+def execute_adb(adb_command, timeout=30):
+    try:
+        result = subprocess.run(
+            adb_command,
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=timeout
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+        print(f"Command execution failed: {adb_command}")
+        print(result.stderr)
+        return "ERROR"
+    except subprocess.TimeoutExpired:
+        print(f"ADB command timed out after {timeout} seconds: {adb_command}")
+        return "ERROR"
+    except Exception as e:
+        print(f"ADB command failed with exception: {adb_command}, Error: {str(e)}")
+        return "ERROR"
 
 
 def list_all_devices() -> list:
@@ -124,17 +132,22 @@ def take_screenshot(
     pull_command = f"adb -s {device} pull {remote_file} {screenshot_file}"
     delete_command = f"adb -s {device} shell rm {remote_file}"
 
-    sleep(3)
-    # Execute screenshot command
-    try:
-        if execute_adb(cap_command) != "ERROR":
-            if execute_adb(pull_command) != "ERROR":
-                execute_adb(
-                    delete_command
-                )  # Delete temporary screenshot file from device
-                return f"{screenshot_file}"
-    except Exception as e:
-        return f"Screenshot failed, error information: {str(e)}"
+    # Reduced sleep time to improve performance
+    sleep(0.5)
+    
+    # Execute screenshot command with better error handling
+    print(f"Executing screenshot command: {cap_command}")
+    if execute_adb(cap_command, timeout=15) != "ERROR":
+        print(f"Screenshot captured, pulling file: {pull_command}")
+        if execute_adb(pull_command, timeout=10) != "ERROR":
+            # Clean up the temporary file on device
+            execute_adb(delete_command, timeout=5)
+            print(f"Screenshot saved successfully: {screenshot_file}")
+            return screenshot_file
+        else:
+            print("Failed to pull screenshot from device")
+    else:
+        print("Failed to capture screenshot on device")
 
     return "Screenshot failed. Please check device connection or permissions."
 
@@ -166,7 +179,8 @@ def screen_element(image_path: str) -> Dict:
     try:
         with open(image_path, "rb") as file:
             files = [("file", (os.path.basename(image_path), file, "image/png"))]
-            response = requests.post(api_url, files=files)
+            print(f"Sending image to OmniParser API: {api_url}")
+            response = requests.post(api_url, files=files, timeout=30)
 
         # Check response status
         if response.status_code != 200:
@@ -214,6 +228,10 @@ def screen_element(image_path: str) -> Dict:
             "elapsed_time": elapsed_time,
         }
 
+    except requests.exceptions.Timeout:
+        return {"error": "Request timeout - OmniParser API took too long to respond (>30s)"}
+    except requests.exceptions.ConnectionError:
+        return {"error": "Connection error - unable to reach OmniParser API. Check if the service is running."}
     except Exception as e:
         return {"error": f"An exception occurred during tool execution: {str(e)}"}
 

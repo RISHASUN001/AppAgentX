@@ -20,10 +20,22 @@ from matplotlib import pyplot as plt
 import easyocr
 from paddleocr import PaddleOCR
 reader = easyocr.Reader(['en'])
-paddle_ocr = PaddleOCR(
-    lang='en',  # other lang also available
-    use_angle_cls=False,
-    rec_batch_num=1024)
+
+# Initialize PaddleOCR with error handling for compatibility
+try:
+    paddle_ocr = PaddleOCR(
+        lang='en',  # other lang also available
+        use_angle_cls=False,
+        rec_batch_num=1024,
+        use_gpu=False)  # Force CPU usage
+except Exception as e:
+    print(f"Warning: PaddleOCR initialization failed: {e}")
+    print("Falling back to basic PaddleOCR initialization...")
+    try:
+        paddle_ocr = PaddleOCR(lang='en', use_angle_cls=False, use_gpu=False)
+    except Exception as e2:
+        print(f"Error: Could not initialize PaddleOCR: {e2}")
+        paddle_ocr = None
 import time
 import base64
 
@@ -60,19 +72,58 @@ def get_caption_model_processor(model_name, model_name_or_path="Salesforce/blip2
         ).to(device)
     elif model_name == "florence2":
         from transformers import AutoProcessor, AutoModelForCausalLM 
+        import warnings
+        
+        # Suppress specific warnings related to SDPA
+        warnings.filterwarnings("ignore", message=".*_supports_sdpa.*")
+        
         processor = AutoProcessor.from_pretrained("microsoft/Florence-2-base", trust_remote_code=True)
-        if device == 'cpu':
-            model = AutoModelForCausalLM.from_pretrained(model_name_or_path, torch_dtype=torch.float32, trust_remote_code=True)
-        else:
-            model = AutoModelForCausalLM.from_pretrained(model_name_or_path, torch_dtype=torch.float16, trust_remote_code=True).to(device)
+        
+        # Set environment variable to force eager attention
+        import os
+        os.environ['TRANSFORMERS_ATTENTION_TYPE'] = 'eager'
+        
+        try:
+            if device == 'cpu':
+                model = AutoModelForCausalLM.from_pretrained(
+                    model_name_or_path, 
+                    torch_dtype=torch.float32, 
+                    trust_remote_code=True, 
+                    attn_implementation="eager",
+                    use_safetensors=True
+                )
+            else:
+                model = AutoModelForCausalLM.from_pretrained(
+                    model_name_or_path, 
+                    torch_dtype=torch.float16, 
+                    trust_remote_code=True, 
+                    attn_implementation="eager",
+                    use_safetensors=True
+                ).to(device)
+        except Exception as e:
+            print(f"Error loading Florence-2 model: {e}")
+            # If Florence-2 fails, raise the exception to be handled by the calling code
+            # This allows the service to run without the caption model
+            raise e
     return {'model': model.to(device), 'processor': processor}
 
 
 def get_yolo_model(model_path):
     from ultralytics import YOLO
-    # Load the model.
-    model = YOLO(model_path)
-    return model
+    try:
+        # Load the model.
+        model = YOLO(model_path)
+        return model
+    except Exception as e:
+        print(f"Error loading YOLO model from {model_path}: {e}")
+        print("Attempting to download a compatible YOLOv8 model...")
+        try:
+            # Fallback to downloading a compatible model
+            model = YOLO('yolov8n.pt')  # Download YOLOv8 nano model
+            return model
+        except Exception as e2:
+            print(f"Failed to load fallback model: {e2}")
+            raise e2
 
 
 @torch.inference_mode()
@@ -495,7 +546,7 @@ def get_xywh_yolo(input):
 
 
 def check_ocr_box(image_path, display_img = True, output_bb_format='xywh', goal_filtering=None, easyocr_args=None, use_paddleocr=False):
-    if use_paddleocr:
+    if use_paddleocr and paddle_ocr is not None:
         if easyocr_args is None:
             text_threshold = 0.5
         else:

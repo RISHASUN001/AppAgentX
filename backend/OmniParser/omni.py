@@ -32,11 +32,17 @@ caption_model_path = 'weights/icon_caption_florence'
 som_model = get_yolo_model(model_path=yolo_model_path)
 som_model.to(device)
 
-caption_model_processor = get_caption_model_processor(
-    model_name=caption_model_name,
-    model_name_or_path=caption_model_path,
-    device=device
-)
+try:
+    caption_model_processor = get_caption_model_processor(
+        model_name=caption_model_name,
+        model_name_or_path=caption_model_path,
+        device=device
+    )
+    print("✅ Florence-2 model loaded successfully")
+except Exception as e:
+    print(f"⚠️ Failed to load Florence-2 model: {e}")
+    print("📝 Running without caption model - only icon detection will be available")
+    caption_model_processor = None
 
 @app.post("/process_image/")
 async def process_image(

@@ -9,13 +9,14 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
-# LLM Configuration
+# LLM Configurationx
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "gemini")  # 'gemini', 'openai', 'deepseek', etc.
 LLM_API_KEY = os.getenv("LLM_API_KEY", "")
 LLM_MODEL = os.getenv("LLM_MODEL", "gemini-pro")  # e.g., 'gemini-pro', 'gpt-4o', etc.
 LLM_MAX_TOKEN = int(os.getenv("LLM_MAX_TOKEN", 1500))
 LLM_REQUEST_TIMEOUT = int(os.getenv("LLM_REQUEST_TIMEOUT", 500))
 LLM_MAX_RETRIES = int(os.getenv("LLM_MAX_RETRIES", 3))
+LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/")
 
 # Gemini-specific (if needed)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", LLM_API_KEY)

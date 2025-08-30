@@ -49,15 +49,34 @@ print(f"[Neo4j Debug] URI: {URI} (type: {type(URI)})")
 print(f"[Neo4j Debug] USERNAME: {USERNAME} (type: {type(USERNAME)})")
 print(f"[Neo4j Debug] PASSWORD: {'*' * len(PASSWORD) if PASSWORD else None} (type: {type(PASSWORD)})")
 print("[Neo4j Debug] Attempting to connect to Neo4j...")
-try:
-    AUTH = (USERNAME, PASSWORD)
-    print(f"[Neo4j Debug] AUTH tuple: {AUTH}")
-    db = Neo4jDatabase(URI, AUTH)
-    print("[Neo4j Debug] Successfully connected to Neo4j.")
-except Exception as e:
-    print(f"[Neo4j Debug] Failed to connect to Neo4j: {e}")
-    traceback.print_exc()
-    raise
+
+# Try alternative URI schemes for Neo4j Aura if routing fails
+alternative_uris = []
+if URI:
+    alternative_uris.append(URI)  # Original URI
+    if URI.startswith("neo4j+s://"):
+        # Try neo4j+ssc:// (self-signed certificate) for SSL issues
+        ssc_uri = URI.replace("neo4j+s://", "neo4j+ssc://")
+        alternative_uris.append(ssc_uri)
+        # Try bolt+ssc:// instead of bolt+s:// for SSL issues
+        bolt_ssc_uri = URI.replace("neo4j+s://", "bolt+ssc://")
+        alternative_uris.append(bolt_ssc_uri)
+
+db = None
+for attempt, uri in enumerate(alternative_uris, 1):
+    try:
+        AUTH = (USERNAME, PASSWORD)
+        print(f"[Neo4j Debug] Attempt {attempt}: Trying URI {uri}")
+        print(f"[Neo4j Debug] AUTH tuple: {AUTH}")
+        db = Neo4jDatabase(uri, AUTH)
+        print(f"[Neo4j Debug] Successfully connected to Neo4j using {uri}")
+        break
+    except Exception as e:
+        print(f"[Neo4j Debug] Attempt {attempt} failed with URI {uri}: {e}")
+        if attempt == len(alternative_uris):
+            print("[Neo4j Debug] All connection attempts failed.")
+            print("[Neo4j Debug] Please check your Neo4j Aura database status.")
+            raise
 
 
 # Chain evaluation result model
