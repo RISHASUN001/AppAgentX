@@ -24,6 +24,8 @@ MODELS_CONFIG = {
 }
 
 class ModelConfig(BaseModel):
+    model_config = {"protected_namespaces": ()}
+    
     model_name: str
     image_size: Optional[int] = None
     mean: List[float] = Field(default=[0.485, 0.456, 0.406])
@@ -33,6 +35,8 @@ class ModelConfig(BaseModel):
     normalize: bool = Field(default=True)
 
 class BatchResponse(BaseModel):
+    model_config = {"protected_namespaces": ()}
+    
     features: List[List[float]]
     time_taken: float
     shape: List[int]

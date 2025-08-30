@@ -212,8 +212,8 @@ def single_human_explor(state: State, action: str, **kwargs) -> State:
             - element_number (int): When clicking or long-pressing an element, this index may be needed to determine coordinates
             - text_input (str): The text to be input when performing a text action
             - swipe_direction (str): When performing a swipe action, specify the direction ("up", "down", "left", "right")
-            - start (tuple): Starting coordinates for swipe_precise operation (x_start, y_start)
-            - end (tuple): Ending coordinates for swipe_precise operation (x_end, y_end)
+            - start (list): Starting coordinates for swipe_precise operation [x_start, y_start]
+            - end (list): Ending coordinates for swipe_precise operation [x_end, y_end]
             - duration (int): Duration of long press or precise swipe (milliseconds), default 1000 or 400
             - x (int), y (int): Screen coordinates for click, long press, etc.
 
