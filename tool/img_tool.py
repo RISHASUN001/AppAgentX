@@ -260,8 +260,70 @@ def element_img(page_path: str, elements_json: str, ID: int) -> BytesIO:
         raise Exception(f"Error extracting element image: {str(e)}")
 
 
+def elements_img(page_path: str, elements_json: str, element_id: int) -> BytesIO:
+    """
+    Crop a single element from a page and return the image byte stream.
+    This function is used for visual element matching in deployment.py.
+
+    Parameters:
+        page_path: str, image path of the page
+        elements_json: str, JSON string containing elements data
+        element_id: int, ID of the element to extract
+
+    Returns:
+        BytesIO: Cropped element image byte stream
+    """
+    try:
+        # Load the original image
+        image = Image.open(page_path)
+        width, height = image.size
+
+        # Parse JSON string
+        elements = json.loads(elements_json)
+
+        # Find the element with the specified ID
+        target_element = None
+        for element in elements:
+            if element.get("ID") == element_id:
+                target_element = element
+                break
+
+        if target_element is None:
+            raise ValueError(f"Element with ID {element_id} not found")
+
+        # Get and normalize the bounding box
+        bbox = target_element["bbox"]
+        x1 = max(0, int(bbox[0] * width))
+        y1 = max(0, int(bbox[1] * height))
+        x2 = min(width, int(bbox[2] * width))
+        y2 = min(height, int(bbox[3] * height))
+
+        # Ensure a valid cropping area
+        if x2 <= x1 or y2 <= y1:
+            raise ValueError(
+                f"Invalid bounding box for element {element_id}: ({x1}, {y1}, {x2}, {y2})"
+            )
+
+        # Crop the element
+        element_image = image.crop((x1, y1, x2, y2))
+
+        # Ensure the cropped image is not empty
+        if element_image.size[0] == 0 or element_image.size[1] == 0:
+            raise ValueError(f"Cropped image for element {element_id} is empty")
+
+        # Convert the image to a byte stream
+        img_byte_arr = BytesIO()
+        element_image.save(img_byte_arr, format="PNG")
+        img_byte_arr.seek(0)  # Move the pointer back to the start position
+
+        return img_byte_arr
+
+    except Exception as e:
+        raise Exception(f"Error extracting element image: {str(e)}")
+
+
 @tool
-def elements_img(page_path: str, json_path: str, IDs: List[int]) -> List[BytesIO]:
+def elements_img_batch(page_path: str, json_path: str, IDs: List[int]) -> List[BytesIO]:
     """
     Batch crop multiple elements from a page and return a list of image byte streams.
 

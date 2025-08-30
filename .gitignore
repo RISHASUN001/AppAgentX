@@ -4,3 +4,7 @@
 /log/
 venv/
 .env
+
+# Large model files - download separately
+backend/OmniParser/weights/
+backend/OmniParser/yolov8n.pt

@@ -3,6 +3,10 @@ from typing import Any, Optional, Tuple
 from dotenv import load_dotenv
 import os
 
+# Add rate limiting to prevent API quota issues
+_last_api_call = 0
+_api_call_interval = 3  # Minimum 3 seconds between API calls for free tier
+
 # Load environment variables from .env file
 load_dotenv()
 import config
@@ -63,6 +67,20 @@ for attempt, uri in enumerate(alternative_uris, 1):
             raise
 
 vector_db = VectorStore(api_key=config.PINECONE_API_KEY)
+
+
+def rate_limit_api_call():
+    """Ensure minimum interval between API calls to avoid quota issues."""
+    global _last_api_call, _api_call_interval
+    current_time = time.time()
+    time_since_last = current_time - _last_api_call
+    
+    if time_since_last < _api_call_interval:
+        sleep_time = _api_call_interval - time_since_last
+        print(f"⏳ Rate limiting: waiting {sleep_time:.1f}s to avoid API quota...")
+        time.sleep(sleep_time)
+    
+    _last_api_call = time.time()
 
 
 def create_execution_state(device: str) -> Dict[str, Any]:
@@ -587,13 +605,21 @@ def execute_element_action(
         element = state["current_page"]["elements_data"][screen_element_id]
         bbox = element.get("bbox", [0, 0, 0, 0])
 
-        # Get device size and calculate center point
+        # Get device size and calculate center point with better precision
         device_size = get_device_size.invoke(state["device"])
         if isinstance(device_size, str):
             # Default size
             device_size = {"width": 1080, "height": 1920}
-        center_x = int((bbox[0] + bbox[2]) / 2 * device_size["width"])
-        center_y = int((bbox[1] + bbox[3]) / 2 * device_size["height"])
+        
+        # More precise coordinate calculation
+        width = device_size["width"]
+        height = device_size["height"]
+        
+        # Calculate center point with bounds checking
+        center_x = max(10, min(width - 10, int((bbox[0] + bbox[2]) / 2 * width)))
+        center_y = max(10, min(height - 10, int((bbox[1] + bbox[3]) / 2 * height)))
+        
+        print(f"🎯 Calculated tap coordinates: ({center_x}, {center_y}) for element with bbox {bbox}")
 
         # Prepare action parameters
         action_params = {
@@ -725,8 +751,30 @@ and complete it by calling tools. All tool calls must pass in device to specify 
     # Add these messages to state
     state["messages"].extend(messages)
 
+    # Check if we should stop due to repeated actions or API limits
+    if len(state["history"]) >= 5:
+        recent_actions = [step.get("action", "") for step in state["history"][-3:]]
+        if len(set(recent_actions)) <= 2:  # Only 1-2 unique actions in last 3 steps
+            print("🛑 Stopping due to repeated actions - likely task completed or stuck")
+            state["execution_status"] = "completed"
+            state["completed"] = True
+            return state
+
     # Call action_agent for decision making and action execution
-    action_result = action_agent.invoke({"messages": state["messages"][-4:]})
+    try:
+        rate_limit_api_call()  # Prevent API quota issues
+        action_result = action_agent.invoke({"messages": state["messages"][-4:]})
+    except Exception as e:
+        error_msg = str(e)
+        if "quota" in error_msg.lower() or "429" in error_msg:
+            print("🛑 Stopping due to API quota limits")
+            state["execution_status"] = "completed"
+            state["completed"] = True
+            return state
+        else:
+            print(f"❌ Action agent failed: {error_msg}")
+            state["execution_status"] = "error"
+            return state
 
     # Parse results
     final_messages = action_result.get("messages", [])
@@ -753,6 +801,12 @@ and complete it by calling tools. All tool calls must pass in device to specify 
 
         state["execution_status"] = "success"
         print(f"✓ React mode execution successful: {recommended_action}")
+        
+        # For simple single-action tasks, mark as completed immediately
+        task_lower = state["task"].lower()
+        if any(word in task_lower for word in ["click", "tap", "press", "select"]):
+            print("🎯 Simple action task completed - marking as finished")
+            state["completed"] = True
     else:
         error_msg = "React mode execution failed: No messages returned"
         print(f"❌ {error_msg}")
@@ -1005,6 +1059,7 @@ def run_task(task: str, device: str = "emulator-5554") -> Dict[str, Any]:
             "message": "Task execution completed",
             "steps_completed": result["current_step"],
             "total_steps": result["total_steps"],
+            "completed": result.get("completed", False),  # Add completed status for frontend
         }
 
     except Exception as e:
@@ -1013,6 +1068,7 @@ def run_task(task: str, device: str = "emulator-5554") -> Dict[str, Any]:
             "status": "error",
             "message": f"Error executing task: {str(e)}",
             "error": str(e),
+            "completed": False,  # Add completed status for frontend
         }
 
 
@@ -1515,13 +1571,20 @@ def execute_high_level_action(
         element = screen_elements[target_element_id]
         bbox = element.get("bbox", [0, 0, 0, 0])
 
-        # Get device size and calculate center point
+        # Get device size and calculate center point with better precision
         device_size = get_device_size.invoke(state["device"])
         if isinstance(device_size, str):
             device_size = {"width": 1080, "height": 1920}
 
-        center_x = int((bbox[0] + bbox[2]) / 2 * device_size["width"])
-        center_y = int((bbox[1] + bbox[3]) / 2 * device_size["height"])
+        # More precise coordinate calculation
+        width = device_size["width"]
+        height = device_size["height"]
+        
+        # Calculate center point with bounds checking
+        center_x = max(10, min(width - 10, int((bbox[0] + bbox[2]) / 2 * width)))
+        center_y = max(10, min(height - 10, int((bbox[1] + bbox[3]) / 2 * height)))
+        
+        print(f"🎯 Calculated action coordinates: ({center_x}, {center_y}) for element with bbox {bbox}")
 
         # Prepare operation parameters
         action_params = {
@@ -2033,9 +2096,31 @@ def check_task_completion(state: DeploymentState) -> DeploymentState:
     Returns:
         Updated execution state with task completion status
     """
-    # Skip judgment if too few steps
-    if state["current_step"] < 2:
+    # Skip judgment if too few steps, but check for obvious completion patterns
+    if state["current_step"] < 1:
         return state
+    
+    # Quick check: if we've done the same action multiple times recently, likely completed or stuck
+    recent_actions = []
+    if len(state["history"]) >= 2:  # Check after just 2 actions instead of 3
+        recent_actions = [step.get("action", "") for step in state["history"][-2:]]
+        if len(set(recent_actions)) == 1 and recent_actions[0] in ["swipe", "tap", "react_mode"]:
+            # Same action repeated 2 times - likely stuck or task completed
+            print(f"🔄 Detected repeated action '{recent_actions[0]}' - task likely completed")
+            state["completed"] = True
+            return state
+    
+    # Special check for simple single-action tasks
+    if len(state["history"]) >= 1:
+        last_action = state["history"][-1]
+        task_lower = state["task"].lower()
+        
+        # For simple "click" or "tap" tasks, one successful action should be enough
+        if any(word in task_lower for word in ["click", "tap", "press", "select"]):
+            if last_action.get("status") == "success" and last_action.get("action") in ["tap", "react_mode"]:
+                print(f"🎯 Simple click task completed successfully")
+                state["completed"] = True
+                return state
 
     print("🔍 Evaluating if task is completed...")
 

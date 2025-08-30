@@ -4,7 +4,7 @@ import json
 import os
 import subprocess
 from time import sleep
-from typing import Dict
+from typing import Dict, Optional, Tuple, List
 import requests
 from dotenv import load_dotenv
 from langchain_core.tools import tool
@@ -13,10 +13,59 @@ from langchain_core.tools import tool
 load_dotenv()
 import config  # Import configuration module
 
+# Apply Gemini schema fix for tuple parameters
+try:
+    from fix_gemini_schema import apply_gemini_schema_fix
+    apply_gemini_schema_fix()
+except ImportError:
+    print("⚠️ Gemini schema fix not available, tuple parameters may cause issues")
+
 
 # Define a function to execute ADB commands
 def execute_adb(adb_command, timeout=30):
     try:
+        # First, try to find ADB in common locations
+        adb_paths = [
+            "adb",  # If in PATH
+            r"C:\Users\{}\AppData\Local\Android\Sdk\platform-tools\adb.exe".format(os.environ.get('USERNAME', '')),
+            r"C:\Android\Sdk\platform-tools\adb.exe",
+            r"C:\Program Files\Android\Android Studio\platform-tools\adb.exe",
+            r"C:\Program Files (x86)\Android\android-sdk\platform-tools\adb.exe",
+        ]
+        
+        adb_executable = None
+        for path in adb_paths:
+            try:
+                if path == "adb":
+                    # Test if adb is in PATH
+                    test_result = subprocess.run(
+                        "adb version",
+                        shell=True,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        timeout=5
+                    )
+                    if test_result.returncode == 0:
+                        adb_executable = "adb"
+                        break
+                elif os.path.exists(path):
+                    adb_executable = f'"{path}"'  # Quote path in case of spaces
+                    break
+            except:
+                continue
+        
+        if not adb_executable:
+            print("❌ ADB not found! Please install Android SDK Platform Tools or add ADB to your PATH.")
+            print("💡 You can download it from: https://developer.android.com/studio/releases/platform-tools")
+            print("💡 Or install Android Studio which includes ADB.")
+            return "ERROR_ADB_NOT_FOUND"
+        
+        # Replace 'adb' in the command with the found executable path
+        if adb_command.startswith("adb "):
+            adb_command = adb_command.replace("adb ", f"{adb_executable} ", 1)
+        elif adb_command == "adb":
+            adb_command = adb_executable
+            
         result = subprocess.run(
             adb_command,
             shell=True,
@@ -27,14 +76,14 @@ def execute_adb(adb_command, timeout=30):
         )
         if result.returncode == 0:
             return result.stdout.strip()
-        print(f"Command execution failed: {adb_command}")
-        print(result.stderr)
+        print(f"❌ Command execution failed: {adb_command}")
+        print(f"❌ Error: {result.stderr}")
         return "ERROR"
     except subprocess.TimeoutExpired:
-        print(f"ADB command timed out after {timeout} seconds: {adb_command}")
+        print(f"⏰ ADB command timed out after {timeout} seconds: {adb_command}")
         return "ERROR"
     except Exception as e:
-        print(f"ADB command failed with exception: {adb_command}, Error: {str(e)}")
+        print(f"❌ ADB command failed with exception: {adb_command}, Error: {str(e)}")
         return "ERROR"
 
 
@@ -241,15 +290,17 @@ def screen_element(image_path: str) -> Dict:
 def screen_action(
     device: str = "emulator",
     action: str = "tap",
-    x: int = None,
-    y: int = None,
-    input_str: str = None,
+    x: Optional[int] = None,
+    y: Optional[int] = None,
+    input_str: Optional[str] = None,
     duration: int = 1000,
-    direction: str = None,
+    direction: Optional[str] = None,
     dist: str = "medium",
     quick: bool = False,
-    start: tuple = None,
-    end: tuple = None,
+    start_x: Optional[int] = None,
+    start_y: Optional[int] = None,
+    end_x: Optional[int] = None,
+    end_y: Optional[int] = None,
 ) -> str:
     """
     Tool name: screen_action
@@ -271,7 +322,7 @@ def screen_action(
             - "swipe": Swipe operation, supports four directions ("up", "down", "left", "right").
                 Requires parameters: x, y, direction, dist (default "medium"), quick (default False)
             - "swipe_precise": Precise swipe, swipe from the specified start point to the specified end point.
-                Requires parameters: start, end, duration (default 400 milliseconds)
+                Requires parameters: start_x, start_y, end_x, end_y, duration (default 400 milliseconds)
 
     Returns:
         Returns a JSON string including the following fields:
@@ -340,16 +391,16 @@ def screen_action(
                         "message": "Missing required parameters for swipe action (x, y, direction)",
                     }
                 )
-            unit_dist = 100  # Swipe base distance
+            unit_dist = 300  # Increased swipe base distance for more effective scrolling
             offset_x, offset_y = 0, 0
             if direction == "up":
-                offset_y = -2 * unit_dist if dist == "medium" else -3 * unit_dist
+                offset_y = -3 * unit_dist if dist == "medium" else -4 * unit_dist  # Much longer upward swipes
             elif direction == "down":
-                offset_y = 2 * unit_dist if dist == "medium" else 3 * unit_dist
+                offset_y = 3 * unit_dist if dist == "medium" else 4 * unit_dist   # Much longer downward swipes
             elif direction == "left":
-                offset_x = -2 * unit_dist if dist == "medium" else -3 * unit_dist
+                offset_x = -3 * unit_dist if dist == "medium" else -4 * unit_dist
             elif direction == "right":
-                offset_x = 2 * unit_dist if dist == "medium" else 3 * unit_dist
+                offset_x = 3 * unit_dist if dist == "medium" else 4 * unit_dist
             else:
                 return json.dumps(
                     {
@@ -369,21 +420,19 @@ def screen_action(
             }
 
         elif action == "swipe_precise":
-            if not start or not end:
+            if start_x is None or start_y is None or end_x is None or end_y is None:
                 return json.dumps(
                     {
                         "status": "error",
                         "action": action,
                         "device": device,
-                        "message": "Missing required parameters for swipe_precise action (start, end)",
+                        "message": "Missing required parameters for swipe_precise action (start_x, start_y, end_x, end_y)",
                     }
                 )
-            start_x, start_y = start
-            end_x, end_y = end
             adb_command = f"adb -s {device} shell input swipe {start_x} {start_y} {end_x} {end_y} {duration}"
             result_data["swipe_precise"] = {
-                "start": start,
-                "end": end,
+                "start": (start_x, start_y),
+                "end": (end_x, end_y),
                 "duration": duration,
             }
 
@@ -401,9 +450,17 @@ def screen_action(
         ret = execute_adb(adb_command)
         if ret is not None and "ERROR" not in ret.upper():
             result_data["status"] = "success"
+            print(f"✅ Action '{action}' executed successfully")
         else:
             result_data["status"] = "error"
-            result_data["message"] = f"ADB command execution failed: {ret}"
+            if ret == "ERROR_ADB_NOT_FOUND":
+                result_data["message"] = "ADB not found. Please install Android SDK Platform Tools or add ADB to your PATH."
+                result_data["error_type"] = "adb_not_found"
+                print(f"❌ Action '{action}' failed: ADB not found")
+            else:
+                result_data["message"] = f"ADB command execution failed: {ret}"
+                result_data["error_type"] = "adb_execution_failed"
+                print(f"❌ Action '{action}' failed: {ret}")
 
         return json.dumps(result_data, ensure_ascii=False)
 
