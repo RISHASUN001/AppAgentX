@@ -9,16 +9,77 @@ import json
 import os
 import subprocess
 import time
+from download_model import download_model
 import numpy as np
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from PIL import Image
+import logging
+import torch
+import torch.nn as nn
+from torchvision import models, transforms
+import cv2
+class BinaryUI(nn.Module):
+    """
+    Binary UI classifier from AdaT - determines if UI rendering is complete
+    """
+    def __init__(self, model_path=None, model_name='mobilenet'):
+        super(BinaryUI, self).__init__()
+        
+        # Load pre-trained model
+        if model_name == 'mobilenet':
+            self.model = models.mobilenet_v2(pretrained=False)
+            # Modify for binary classification
+            self.model.classifier[1] = nn.Linear(self.model.last_channel, 2)
+        else:
+            raise ValueError(f"Unsupported model: {model_name}")
+        
+        # Load trained weights if provided
+        if model_path and os.path.exists(model_path):
+            try:
+                self.load_state_dict(torch.load(model_path, map_location='cpu'))
+                print(f"✅ Loaded model from {model_path}")
+            except Exception as e:
+                print(f"⚠️  Failed to load model: {e}")
+        else:
+            print("⚠️  No model path provided or model doesn't exist")
+        
+        self.eval()
+        
+        # Image preprocessing
+        self.preprocess = transforms.Compose([
+            transforms.Resize(256),
+            transforms.CenterCrop(224),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], 
+                               std=[0.229, 0.224, 0.225]),
+        ])
+    
+    def forward(self, x):
+        return self.model(x)
+    
+    def predict(self, image):
+        """Predict if UI rendering is complete (0=blurred, 1=rendered)"""
+        try:
+            if isinstance(image, np.ndarray):
+                image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+            
+            input_tensor = self.preprocess(image)
+            input_batch = input_tensor.unsqueeze(0)
+            
+            with torch.no_grad():
+                output = self.model(input_batch)
+                probabilities = torch.nn.functional.softmax(output[0], dim=0)
+            
+            return probabilities[1].item()  # Probability that UI is fully rendered
+        except Exception as e:
+            print(f"⚠️  Prediction failed: {e}")
+            return 0.5  # Default value
 
 # Try to import CLIP, fallback if not available
 try:
     import clip
-    import torch
     CLIP_AVAILABLE = True
 except ImportError:
     CLIP_AVAILABLE = False
@@ -30,10 +91,104 @@ try:
 except ImportError:
     FAISS_AVAILABLE = False
     print("⚠️  FAISS not available - no vector storage")
-    FAISS_AVAILABLE = True
-except ImportError:
-    FAISS_AVAILABLE = False
-    print("⚠️  FAISS not available - no vector storage")
+
+
+class AdaptiveWait:
+    """
+    Adaptive waiting system using AdaT's binary classification approach
+    """
+    
+    def __init__(self, 
+                 model_path=None,
+                 max_model_tries=4,
+                 max_throttle_ms=1000,
+                 min_wait_time=0.5,
+                 max_wait_time=5.0):
+        
+        self.classifier = BinaryUI(model_path)
+        self.max_model_tries = max_model_tries
+        self.max_throttle_ms = max_throttle_ms
+        self.min_wait_time = min_wait_time
+        self.max_wait_time = max_wait_time
+        self.last_rendering_time = None
+        
+        # Warm up the model
+        self._warmup_model()
+    
+    def _warmup_model(self):
+        """Warm up the model with a dummy image"""
+        try:
+            dummy_image = np.zeros((224, 224, 3), dtype=np.uint8)
+            self.classifier.predict(dummy_image)
+            print("✅ Binary UI classifier warmed up")
+        except Exception as e:
+            print(f"⚠️  Model warmup failed: {e}")
+    
+    def wait_for_rendering(self, screenshot_provider, action_type="general"):
+        """
+        Wait until UI rendering is complete using AdaT approach
+        Returns the actual wait time
+        """
+        start_time = time.time()
+        predict_tries = 0
+        is_rendering_complete = False
+        
+        # Base wait times for different actions
+        base_wait_times = {
+            "click": 0.8,
+            "swipe": 1.5,
+            "type": 1.2,
+            "double_tap": 0.7,
+            "general": 1.0
+        }
+        
+        base_time = base_wait_times.get(action_type, 1.0)
+        
+        # If we don't have a working classifier, just use base time
+        if not hasattr(self.classifier, 'model'):
+            print("⚠️  No classifier available, using base wait time")
+            time.sleep(base_time)
+            return base_time
+        
+        while (not is_rendering_complete and 
+               predict_tries < self.max_model_tries and 
+               (time.time() - start_time) * 1000 < self.max_throttle_ms):
+            
+            predict_tries += 1
+            
+            try:
+                # Get current screenshot
+                screenshot = screenshot_provider()
+                if screenshot is None:
+                    continue
+                
+                # Predict if rendering is complete
+                rendering_prob = self.classifier.predict(screenshot)
+                is_rendering_complete = rendering_prob > 0.7  # Threshold for "rendered"
+                
+                if is_rendering_complete:
+                    break
+                    
+                # Wait a bit before checking again
+                time.sleep(0.1)
+                
+            except Exception as e:
+                print(f"⚠️  Rendering check failed: {e}")
+                break
+        
+        # Calculate actual wait time
+        actual_wait = time.time() - start_time
+        
+        # Apply bounds
+        bounded_wait = max(self.min_wait_time, min(actual_wait, self.max_wait_time))
+        
+        # If we didn't detect completion, use base time
+        if not is_rendering_complete:
+            bounded_wait = base_time
+        
+        print(f"⏳ Rendering complete: {is_rendering_complete}, Wait: {bounded_wait:.2f}s")
+        return bounded_wait
+
 
 class WorkingUIAgent:
     """
@@ -41,7 +196,7 @@ class WorkingUIAgent:
     Perfect for TikTok scrolling, Instagram browsing, and intelligent app testing
     """
     
-    def __init__(self, device_id: str = None):
+    def __init__(self, device_id: str = None, model_path: str = None):  # ADD model_path parameter here
         """Initialize the working UI agent with CLIP capabilities"""
         print("🚀 Working UI Agent - Advanced Android Automation with CLIP")
         print("🎯 Perfect for TikTok, Instagram, and intelligent app testing!")
@@ -97,7 +252,40 @@ class WorkingUIAgent:
         self.session_actions = []
         self.session_screenshots = []
         
+        # Initialize adaptive waiting system
+        self.adaptive_waiter = AdaptiveWait(
+            model_path=model_path,  # Now model_path is defined
+            max_model_tries=4,
+            max_throttle_ms=1000
+        )
+        
+        # For screenshot provider function
+        self.last_screenshot_array = None
+        
         print("✅ Working UI Agent initialized with advanced capabilities")
+    
+    def _get_current_screenshot_array(self):
+        """Get current screenshot as numpy array for the classifier"""
+        try:
+            # Take a temporary screenshot
+            temp_path = self.take_screenshot("temp_rendering_check")
+            if not temp_path:
+                return None
+            
+            # Read and return as numpy array
+            image = cv2.imread(temp_path)
+            
+            # Clean up temporary file
+            try:
+                os.remove(temp_path)
+            except:
+                pass
+                
+            return image
+            
+        except Exception as e:
+            print(f"⚠️  Failed to get screenshot array: {e}")
+            return None
     
     def _execute_adb(self, command: str) -> str:
         """Execute an ADB command and return the result"""
@@ -197,7 +385,9 @@ class WorkingUIAgent:
         
         print("   ❌ Screenshot failed")
         return ""
-    
+    def get_waiting_stats(self) -> Dict[str, any]:
+        """Get adaptive waiting statistics"""
+        return self.adaptive_waiter.get_statistics()
     def click_coordinates(self, x: int, y: int, description: str = "") -> bool:
         """Click at specific coordinates on the screen"""
         print(f"🖱️  Clicking at ({x}, {y}) - {description}")
@@ -220,18 +410,19 @@ class WorkingUIAgent:
         
         if success:
             print(f"   ✅ Click successful")
-            time.sleep(1.5)  # Wait for UI to respond
+            # Use adaptive waiting instead of fixed time
+            self.wait(action_type="click")
         else:
             print(f"   ❌ Click failed")
         
         return success
     
     def swipe_up(self, description: str = "scroll_up") -> bool:
-        """Swipe up to scroll (perfect for TikTok, Instagram feeds)"""
-        # Calculate swipe coordinates (center of screen, swipe up)
+        """Swipe up to scroll with adaptive waiting"""
+        # Calculate swipe coordinates
         center_x = self.device_info["width"] // 2
-        start_y = int(self.device_info["height"] * 0.8)  # Start near bottom
-        end_y = int(self.device_info["height"] * 0.3)    # End near top
+        start_y = int(self.device_info["height"] * 0.8)
+        end_y = int(self.device_info["height"] * 0.3)
         
         print(f"👆 Swiping up - {description}")
         
@@ -255,15 +446,16 @@ class WorkingUIAgent:
         
         if success:
             print(f"   ✅ Swipe successful")
-            time.sleep(2)  # Wait for content to load
+            # Use adaptive waiting for content loading
+            self.wait(action_type="swipe")
         else:
             print(f"   ❌ Swipe failed")
         
         return success
     
+    
     def double_tap_like(self, description: str = "like_post") -> bool:
-        """Double tap to like (perfect for TikTok, Instagram)"""
-        # Calculate center of screen for double tap
+        """Double tap to like with adaptive waiting"""
         center_x = self.device_info["width"] // 2
         center_y = self.device_info["height"] // 2
         
@@ -273,7 +465,7 @@ class WorkingUIAgent:
         command1 = f"adb -s {self.device_id} shell input tap {center_x} {center_y}"
         result1 = self._execute_adb(command1)
         
-        # Quick delay
+        # Quick delay between taps
         time.sleep(0.1)
         
         # Second tap
@@ -295,11 +487,13 @@ class WorkingUIAgent:
         
         if success:
             print(f"   ✅ Double tap successful")
-            time.sleep(1)  # Wait for like animation
+            # Use adaptive waiting for like animation
+            self.wait(action_type="double_tap")
         else:
             print(f"   ❌ Double tap failed")
         
         return success
+    
     
     def type_text(self, text: str) -> bool:
         """Type text on the device"""
@@ -354,10 +548,30 @@ class WorkingUIAgent:
         
         return success
     
-    def wait(self, seconds: float):
-        """Wait for a specified number of seconds"""
-        print(f"⏳ Waiting {seconds} seconds...")
-        time.sleep(seconds)
+    def wait(self, seconds: float = None, action_type: str = "general"):
+        """Wait adaptively using AdaT approach"""
+        if seconds is not None:
+            # Use specified wait time
+            print(f"⏳ Waiting {seconds} seconds...")
+            time.sleep(seconds)
+            return seconds
+        
+        # Use AdaT approach to wait for rendering completion
+        wait_time = self.adaptive_waiter.wait_for_rendering(
+            self._get_current_screenshot_array,
+            action_type
+        )
+        
+        print(f"⏳ Adaptive wait: {wait_time:.2f} seconds...")
+        time.sleep(wait_time)
+        return wait_time
+    def _get_previous_screenshot(self) -> Optional[str]:
+        """Get the path of the previous screenshot"""
+        if self.session_screenshots and len(self.session_screenshots) > 1:
+            return self.session_screenshots[-2]["path"]
+        return None
+  
+
     
     def start_session(self, session_name: str, description: str = ""):
         """Start a new automation session"""
@@ -767,6 +981,7 @@ class WorkingUIAgent:
 
 def main():
     print("🚀 Working UI Agent - Advanced Android Automation with CLIP")
+    model_path = download_model()
     print("🧠 AI-powered with visual understanding capabilities")
     print("🎯 Perfect for TikTok, Instagram, and intelligent app testing!")
     print("=" * 70)
