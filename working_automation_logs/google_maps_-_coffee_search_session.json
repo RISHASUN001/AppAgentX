@@ -1,0 +1,74 @@
+{
+  "session": {
+    "name": "google_maps_-_coffee_search",
+    "description": "Search for coffee shops on Google Maps (ORIGINAL WORKING DEMO)",
+    "device": "emulator-5554",
+    "device_info": {
+      "width": 1080,
+      "height": 2424
+    },
+    "started": "2025-08-30T12:51:16.708575",
+    "completed": "2025-08-30T12:51:45.201968"
+  },
+  "actions": [
+    {
+      "action": "click",
+      "x": 540,
+      "y": 200,
+      "description": "search_box",
+      "timestamp": "2025-08-30T12:51:27.453261",
+      "result": "SUCCESS"
+    },
+    {
+      "action": "type",
+      "text": "coffee shops near me",
+      "timestamp": "2025-08-30T12:51:30.299908",
+      "result": "SUCCESS"
+    },
+    {
+      "action": "click",
+      "x": 540,
+      "y": 600,
+      "description": "first_result",
+      "timestamp": "2025-08-30T12:51:39.872330",
+      "result": "SUCCESS"
+    }
+  ],
+  "screenshots": [
+    {
+      "step": 0,
+      "path": "working_automation_logs/google_maps_-_coffee_search/step00_session_start_20250830_125116.png",
+      "description": "session_start",
+      "timestamp": "2025-08-30T12:51:17.559648"
+    },
+    {
+      "step": 1,
+      "path": "working_automation_logs/google_maps_-_coffee_search/step01_google_maps_start_20250830_125126.png",
+      "description": "google_maps_start",
+      "timestamp": "2025-08-30T12:51:27.391999"
+    },
+    {
+      "step": 2,
+      "path": "working_automation_logs/google_maps_-_coffee_search/step02_search_results_20250830_125139.png",
+      "description": "search_results",
+      "timestamp": "2025-08-30T12:51:39.827972"
+    },
+    {
+      "step": 3,
+      "path": "working_automation_logs/google_maps_-_coffee_search/step03_final_result_20250830_125144.png",
+      "description": "final_result",
+      "timestamp": "2025-08-30T12:51:45.201792"
+    },
+    {
+      "step": 4,
+      "path": "working_automation_logs/google_maps_-_coffee_search/step04_session_end_20250830_125145.png",
+      "description": "session_end",
+      "timestamp": "2025-08-30T12:51:45.913881"
+    }
+  ],
+  "stats": {
+    "total_actions": 3,
+    "total_screenshots": 5,
+    "success_rate": 100.0
+  }
+}

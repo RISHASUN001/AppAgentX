@@ -1,0 +1,90 @@
+{
+  "session": {
+    "name": "tiktok_-_browse_and_like",
+    "description": "Browse TikTok videos and like them",
+    "device": "emulator-5554",
+    "device_info": {
+      "width": 1080,
+      "height": 2424
+    },
+    "started": "2025-08-30T12:59:11.936745",
+    "completed": "2025-08-30T12:59:58.439614"
+  },
+  "actions": [
+    {
+      "action": "double_tap_like",
+      "x": 540,
+      "y": 1212,
+      "description": "like_first_video",
+      "timestamp": "2025-08-30T12:59:38.158699",
+      "result": "SUCCESS"
+    },
+    {
+      "action": "swipe_up",
+      "start_x": 540,
+      "start_y": 1939,
+      "end_x": 540,
+      "end_y": 727,
+      "description": "scroll_to_next_video",
+      "timestamp": "2025-08-30T12:59:41.859532",
+      "result": "SUCCESS"
+    },
+    {
+      "action": "double_tap_like",
+      "x": 540,
+      "y": 1212,
+      "description": "like_second_video",
+      "timestamp": "2025-08-30T12:59:47.102808",
+      "result": "SUCCESS"
+    },
+    {
+      "action": "swipe_up",
+      "start_x": 540,
+      "start_y": 1939,
+      "end_x": 540,
+      "end_y": 727,
+      "description": "scroll_to_third_video",
+      "timestamp": "2025-08-30T12:59:50.763876",
+      "result": "SUCCESS"
+    },
+    {
+      "action": "double_tap_like",
+      "x": 540,
+      "y": 1212,
+      "description": "like_third_video",
+      "timestamp": "2025-08-30T12:59:56.039208",
+      "result": "SUCCESS"
+    }
+  ],
+  "screenshots": [
+    {
+      "step": 0,
+      "path": "working_automation_logs/tiktok_-_browse_and_like/step00_session_start_20250830_125911.png",
+      "description": "session_start",
+      "timestamp": "2025-08-30T12:59:13.506688"
+    },
+    {
+      "step": 1,
+      "path": "working_automation_logs/tiktok_-_browse_and_like/step01_tiktok_start_20250830_125933.png",
+      "description": "tiktok_start",
+      "timestamp": "2025-08-30T12:59:34.842399"
+    },
+    {
+      "step": 2,
+      "path": "working_automation_logs/tiktok_-_browse_and_like/step02_tiktok_browsing_complete_20250830_125957.png",
+      "description": "tiktok_browsing_complete",
+      "timestamp": "2025-08-30T12:59:58.439495"
+    },
+    {
+      "step": 3,
+      "path": "working_automation_logs/tiktok_-_browse_and_like/step03_session_end_20250830_125958.png",
+      "description": "session_end",
+      "timestamp": "2025-08-30T12:59:59.278558"
+    }
+  ],
+  "stats": {
+    "total_actions": 5,
+    "total_screenshots": 4,
+    "success_rate": 100.0
+  }
+}

@@ -5,31 +5,55 @@ from typing import List, Dict, Any, Optional, Tuple
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
-from langchain_openai import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
 from pydantic import BaseModel, Field, SecretStr
 import config
 from data.graph_db import Neo4jDatabase
 
 # Configure environment variables
-os.environ["LANGCHAIN_TRACING_V2"] = config.LANGCHAIN_TRACING_V2
-os.environ["LANGCHAIN_ENDPOINT"] = config.LANGCHAIN_ENDPOINT
-os.environ["LANGCHAIN_API_KEY"] = config.LANGCHAIN_API_KEY
+print("[Debug] LANGCHAIN_TRACING_V2:", getattr(config, "LANGCHAIN_TRACING_V2", None))
+print("[Debug] LANGCHAIN_ENDPOINT:", getattr(config, "LANGCHAIN_ENDPOINT", None))
+print("[Debug] LANGCHAIN_API_KEY:", getattr(config, "LANGCHAIN_API_KEY", None))
+os.environ["LANGCHAIN_TRACING_V2"] = getattr(config, "LANGCHAIN_TRACING_V2", "")
+os.environ["LANGCHAIN_ENDPOINT"] = getattr(config, "LANGCHAIN_ENDPOINT", "")
+os.environ["LANGCHAIN_API_KEY"] = getattr(config, "LANGCHAIN_API_KEY", "")
 os.environ["LANGCHAIN_PROJECT"] = "ChainEvolve"
 
-# Initialize LLM model
-model = ChatOpenAI(
-    openai_api_base=config.LLM_BASE_URL,
-    openai_api_key=SecretStr(config.LLM_API_KEY),
-    model_name=config.LLM_MODEL,
-    request_timeout=config.LLM_REQUEST_TIMEOUT,
-    max_retries=config.LLM_MAX_RETRIES,
-    max_tokens=2000,
-)
+# Debug Gemini environment
+print("[Gemini Debug] GEMINI_API_KEY:", os.getenv("GEMINI_API_KEY"))
+print("[Gemini Debug] LLM_MODEL:", os.getenv("LLM_MODEL"))
+# Initialize Gemini LLM model (no base URL needed)
+try:
+    model = ChatGoogleGenerativeAI(
+        google_api_key=os.getenv("GEMINI_API_KEY"),
+        model=os.getenv("LLM_MODEL"),
+        max_output_tokens=2000,
+    )
+    print("[Gemini Debug] Gemini model object:", model)
+except Exception as e:
+    import traceback
+    print("[Gemini Debug] Failed to instantiate Gemini model:", e)
+    traceback.print_exc()
+    raise
 
-# Initialize database connection
-URI = config.Neo4j_URI
-AUTH = config.Neo4j_AUTH
-db = Neo4jDatabase(URI, AUTH)
+# Initialize database connection with more debug statements
+import traceback
+URI = os.getenv("NEO4J_URI")
+USERNAME = os.getenv("NEO4J_USERNAME")
+PASSWORD = os.getenv("NEO4J_PASSWORD")
+print(f"[Neo4j Debug] URI: {URI} (type: {type(URI)})")
+print(f"[Neo4j Debug] USERNAME: {USERNAME} (type: {type(USERNAME)})")
+print(f"[Neo4j Debug] PASSWORD: {'*' * len(PASSWORD) if PASSWORD else None} (type: {type(PASSWORD)})")
+print("[Neo4j Debug] Attempting to connect to Neo4j...")
+try:
+    AUTH = (USERNAME, PASSWORD)
+    print(f"[Neo4j Debug] AUTH tuple: {AUTH}")
+    db = Neo4jDatabase(URI, AUTH)
+    print("[Neo4j Debug] Successfully connected to Neo4j.")
+except Exception as e:
+    print(f"[Neo4j Debug] Failed to connect to Neo4j: {e}")
+    traceback.print_exc()
+    raise
 
 
 # Chain evaluation result model
