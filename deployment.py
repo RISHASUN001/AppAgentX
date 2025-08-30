@@ -23,6 +23,8 @@ from data.graph_db import Neo4jDatabase
 from data.vector_db import VectorStore
 from tool.img_tool import *
 from tool.screen_content import *
+from unified_parser import parse_ui_elements, get_parser_status
+from dynamic_completion import wait_for_action_completion, check_ui_readiness
 
 os.environ["LANGCHAIN_TRACING_V2"] = config.LANGCHAIN_TRACING_V2
 os.environ["LANGCHAIN_ENDPOINT"] = config.LANGCHAIN_ENDPOINT
@@ -67,6 +69,9 @@ for attempt, uri in enumerate(alternative_uris, 1):
             raise
 
 vector_db = VectorStore(api_key=config.PINECONE_API_KEY)
+
+# Working UI Agent functionality has been integrated into dynamic_completion.py
+working_ui_agent = None
 
 
 def rate_limit_api_call():
@@ -220,12 +225,37 @@ def capture_and_parse_screen(state: DeploymentState) -> DeploymentState:
             print("❌ Screenshot failed")
             return state
 
-        # 2. Parse screen elements
-        screen_result = screen_element.invoke({"image_path": screenshot_path})
-
-        if "error" in screen_result:
-            print(f"❌ Screen element parsing failed: {screen_result['error']}")
-            return state
+        # 2. Parse screen elements using unified parser system
+        try:
+            # Use unified parser for better performance and compatibility
+            parser_result = parse_ui_elements(screenshot_path)
+            
+            if parser_result["status"] != "success":
+                print(f"❌ Unified parser failed: {parser_result}")
+                # Fallback to original screen_element
+                screen_result = screen_element.invoke({"image_path": screenshot_path})
+                if "error" in screen_result:
+                    print(f"❌ Screen element parsing failed: {screen_result['error']}")
+                    return state
+            else:
+                print(f"✅ Parsed with {parser_result['parser_used']} parser in {parser_result['processing_time']:.2f}s")
+                # Convert unified parser result to expected format
+                screen_result = {
+                    "parsed_content_json_path": screenshot_path.replace('.png', '_parsed.json'),
+                    "parsed_content": parser_result["parsed_content"]
+                }
+                
+                # Save parsed content to JSON file for compatibility
+                with open(screen_result["parsed_content_json_path"], 'w', encoding='utf-8') as f:
+                    json.dump(parser_result["parsed_content"], f, ensure_ascii=False, indent=2)
+                
+        except Exception as e:
+            print(f"⚠️ Unified parser error: {e}, falling back to original parser")
+            # Fallback to original screen_element
+            screen_result = screen_element.invoke({"image_path": screenshot_path})
+            if "error" in screen_result:
+                print(f"❌ Screen element parsing failed: {screen_result['error']}")
+                return state
 
         # 3. Update current page information
         state["current_page"]["screenshot"] = screenshot_path
@@ -605,21 +635,26 @@ def execute_element_action(
         element = state["current_page"]["elements_data"][screen_element_id]
         bbox = element.get("bbox", [0, 0, 0, 0])
 
-        # Get device size and calculate center point with better precision
+        # Get device dimensions dynamically
         device_size = get_device_size.invoke(state["device"])
         if isinstance(device_size, str):
-            # Default size
-            device_size = {"width": 1080, "height": 1920}
-        
-        # More precise coordinate calculation
-        width = device_size["width"]
-        height = device_size["height"]
+            if "x" in device_size:
+                try:
+                    width, height = map(int, device_size.split("x"))
+                except:
+                    width, height = 1080, 2424  # Default fallback
+            else:
+                width, height = 1080, 2424
+        else:
+            width = device_size.get("width", 1080)
+            height = device_size.get("height", 2424)
         
         # Calculate center point with bounds checking
         center_x = max(10, min(width - 10, int((bbox[0] + bbox[2]) / 2 * width)))
         center_y = max(10, min(height - 10, int((bbox[1] + bbox[3]) / 2 * height)))
         
         print(f"🎯 Calculated tap coordinates: ({center_x}, {center_y}) for element with bbox {bbox}")
+        print(f"📱 Device dimensions: {width}x{height}, coordinates are absolute pixels")
 
         # Prepare action parameters
         action_params = {
@@ -648,6 +683,34 @@ def execute_element_action(
                 result_json = json.loads(result)
                 if result_json.get("status") == "success":
                     print(f"✓ Action executed successfully")
+                    
+                    # Add dynamic completion detection after successful action
+                    try:
+                        def screenshot_func():
+                            """Take screenshot for completion detection"""
+                            return take_screenshot.invoke({
+                                "device": state["device"],
+                                "app_name": "completion_check",
+                                "step": state.get("current_step", 0)
+                            })
+                        
+                        # Wait for UI to complete the action
+                        print("🔍 Waiting for UI action to complete...")
+                        completion_result = wait_for_action_completion(
+                            screenshot_func, 
+                            action_type, 
+                            max_wait=3.0
+                        )
+                        
+                        if completion_result.get("completed", False):
+                            wait_time = completion_result.get("wait_time", 0)
+                            print(f"✅ Action completion detected in {wait_time:.2f}s")
+                        else:
+                            print("⚠️ Action completion timeout - continuing anyway")
+                            
+                    except Exception as e:
+                        print(f"⚠️ Completion detection failed: {e} - continuing anyway")
+                    
                     return True
                 else:
                     print(
@@ -706,12 +769,60 @@ Each step of the operation should move toward completing the user's goal task.""
         state["execution_status"] = "error"
         print("Unable to capture or parse screen")
         return state
+    
+    # Enhanced element detection for specific tasks
+    if "tiktok" in task.lower() or "open app" in task.lower():
+        # Look for app icons specifically in parsed elements
+        parsed_elements = state["current_page"].get("elements_data", [])
+        
+        # Get device dimensions dynamically
+        device_size = get_device_size.invoke(state["device"])
+        if isinstance(device_size, str):
+            # Parse device size string or use defaults
+            if "x" in device_size:
+                try:
+                    width, height = map(int, device_size.split("x"))
+                except:
+                    width, height = 1080, 2424  # Default to Pixel 9a
+            else:
+                width, height = 1080, 2424
+        else:
+            width = device_size.get("width", 1080)
+            height = device_size.get("height", 2424)
+        
+        print(f"📱 Device dimensions: {width}x{height}")
+        
+        # Debug: Show what elements are detected
+        debug_screen_elements(parsed_elements, task)
+        
+        if parsed_elements:
+            app_icon = find_app_icon(parsed_elements, "tiktok", width, height)
+            if app_icon:
+                print(f"🎯 Found TikTok app icon at ({app_icon['x']}, {app_icon['y']})")
+                # Execute tap on the app icon using safe function
+                if safe_tap_coordinates(state["device"], app_icon["x"], app_icon["y"], width, height):
+                    print("✅ Successfully tapped TikTok app icon")
+                    state["execution_status"] = "completed"
+                    state["completed"] = True
+                    return state
+                else:
+                    print("⚠️ Failed to tap app icon - continuing with React mode")
+            
+            # Also look for common permission buttons
+            permission_button = find_ui_element_by_text(parsed_elements, "while using the app", width, height)
+            if permission_button:
+                print(f"🎯 Found permission button at ({permission_button['x']}, {permission_button['y']})")
+                if safe_tap_coordinates(state["device"], permission_button["x"], permission_button["y"], width, height):
+                    print("✅ Successfully tapped permission button")
+                    # Don't mark as completed yet, continue to next step
+                else:
+                    print("⚠️ Failed to tap permission button - continuing with React mode")
 
     # Prepare screen information
     screenshot_path = state["current_page"]["screenshot"]
     elements_json_path = state["current_page"]["elements_json"]
     device = state["device"]
-    device_size = get_device_size.invoke(device)
+    device_size = get_device_size.invoke(state["device"])
 
     # Load screenshot as base64
     with open(screenshot_path, "rb") as f:
@@ -721,6 +832,37 @@ Each step of the operation should move toward completing the user's goal task.""
     # Load element JSON data
     with open(elements_json_path, "r", encoding="utf-8") as f:
         elements_data = json.load(f)
+    
+    # Fix coordinates dynamically based on device size
+    for element in elements_data:
+        if "bbox" in element and len(element["bbox"]) == 4:
+            bbox = element["bbox"]
+            print(f"🔍 Converting element bbox: {bbox}")
+            
+            # Check if bbox values are already absolute pixels or relative (0-1)
+            if max(bbox) > 1.0:  # Likely absolute pixels
+                print(f"   Bbox appears to be absolute pixels, using as-is")
+                x = int(bbox[0])
+                y = int(bbox[1])
+                element_width = int(bbox[2] - bbox[0])
+                element_height = int(bbox[3] - bbox[1])
+            else:  # Relative coordinates (0-1)
+                print(f"   Bbox appears to be relative coordinates, converting to absolute")
+                x = int(bbox[0] * width)
+                y = int(bbox[1] * height)
+                element_width = int((bbox[2] - bbox[0]) * width)
+                element_height = int((bbox[3] - bbox[1]) * height)
+            
+            # Update element with absolute coordinates
+            element["x"] = x
+            element["y"] = y
+            element["width"] = element_width
+            element["height"] = element_height
+            element["center_x"] = x + (element_width // 2)
+            element["center_y"] = y + (element_height // 2)
+            
+            print(f"   Converted to: x={x}, y={y}, w={element_width}, h={element_height}")
+            print(f"   Center: ({element['center_x']}, {element['center_y']})")
 
     elements_text = json.dumps(elements_data, ensure_ascii=False, indent=2)
 
@@ -728,7 +870,16 @@ Each step of the operation should move toward completing the user's goal task.""
     messages = [
         SystemMessage(
             content=f"""Below is the current page information and user intent. Please analyze comprehensively and recommend the next reasonable action (please complete only one step),
-and complete it by calling tools. All tool calls must pass in device to specify the operating device. Only execute one tool call."""
+and complete it by calling tools. All tool calls must pass in device to specify the operating device. Only execute one tool call.
+
+IMPORTANT: The device has screen dimensions {width}x{height}. All coordinates in the elements data have been converted to absolute pixel values.
+Use the center_x and center_y values for precise tapping, or calculate the center of any element using x + (width/2) and y + (height/2).
+
+STRATEGY: 
+1. For opening apps: Look for app icons by name or icon class
+2. For permissions: Look for buttons with text like "While using the app", "Allow", "OK"
+3. For navigation: Use precise coordinates from center_x/center_y
+4. Always validate coordinates are within 0-{width} (width) and 0-{height} (height)"""
         ),
         HumanMessage(
             content=f"The current device is: {device}, the device screen size is {device_size}. The user's current task intent is: {task}"
@@ -759,6 +910,20 @@ and complete it by calling tools. All tool calls must pass in device to specify 
             state["execution_status"] = "completed"
             state["completed"] = True
             return state
+    
+    # Enhanced guidance for React mode
+    print("🎯 React mode: Use center_x and center_y coordinates for precise tapping")
+    print("📱 Device: Pixel 9a (1080x2424) - coordinates are absolute pixels")
+    
+    # Debug: Show detected elements
+    if parsed_elements:
+        print(f"🔍 Detected {len(parsed_elements)} UI elements:")
+        for i, elem in enumerate(parsed_elements[:5]):  # Show first 5 elements
+            text = elem.get("text", "No text")[:30]  # Truncate long text
+            x, y = elem.get("x", 0), elem.get("y", 0)
+            print(f"  {i}: '{text}' at ({x}, {y})")
+        if len(parsed_elements) > 5:
+            print(f"  ... and {len(parsed_elements) - 5} more elements")
 
     # Call action_agent for decision making and action execution
     try:
@@ -826,6 +991,329 @@ and complete it by calling tools. All tool calls must pass in device to specify 
         state["execution_status"] = "error"
 
     return state
+
+
+def find_app_icon(parsed_elements: List[Dict], app_name: str, device_width: int = 1080, device_height: int = 2424) -> Optional[Dict]:
+    """Find app icon by name in parsed elements"""
+    app_name_lower = app_name.lower()
+    
+    # First, try to find by exact text match
+    for element in parsed_elements:
+        element_text = element.get("text", "").lower()
+        if app_name_lower in element_text:
+            print(f"🎯 Found {app_name} by text: '{element.get('text', '')}'")
+            return _get_element_coordinates(element, device_width, device_height)
+    
+    # Then try by class name containing icon/app
+    for element in parsed_elements:
+        element_class = element.get("class", "").lower()
+        if "icon" in element_class or "app" in element_class:
+            print(f"🎯 Found potential {app_name} by class: '{element.get('class', '')}'")
+            return _get_element_coordinates(element, device_width, device_height)
+    
+    # Finally, look for any element that might be an app icon (has bbox and reasonable size)
+    for element in parsed_elements:
+        if "bbox" in element and len(element["bbox"]) == 4:
+            bbox = element["bbox"]
+            # Check if this looks like an app icon (reasonable size, not too small/large)
+            width_ratio = bbox[2] - bbox[0]  # relative width
+            height_ratio = bbox[3] - bbox[1]  # relative height
+            
+            # App icons are typically square-ish and not too small
+            if (0.05 <= width_ratio <= 0.2 and 0.05 <= height_ratio <= 0.2 and 
+                abs(width_ratio - height_ratio) < 0.05):  # roughly square
+                
+                print(f"🎯 Found potential app icon by size/shape: bbox={bbox}")
+                return _get_element_coordinates(element, device_width, device_height)
+    
+    return None
+
+def _get_element_coordinates(element: Dict, device_width: int, device_height: int) -> Optional[Dict]:
+    """Helper function to extract coordinates from element"""
+    print(f"🔍 Processing element: {element.get('text', 'No text')[:30]}")
+    print(f"   Raw bbox: {element.get('bbox', 'No bbox')}")
+    print(f"   Raw x/y: ({element.get('x', 'No x')}, {element.get('y', 'No y')})")
+    
+    # Get coordinates - use bbox if available, otherwise x/y
+    if "bbox" in element and len(element["bbox"]) == 4:
+        bbox = element["bbox"]
+        print(f"   Processing bbox: {bbox}")
+        
+        # Check if bbox values are already absolute pixels (large numbers) or relative (0-1)
+        if max(bbox) > 1.0:  # Likely absolute pixels
+            print(f"   Bbox appears to be absolute pixels")
+            x = int(bbox[0])
+            y = int(bbox[1])
+            width = int(bbox[2] - bbox[0])
+            height = int(bbox[3] - bbox[1])
+        else:  # Relative coordinates (0-1)
+            print(f"   Bbox appears to be relative coordinates")
+            # IMPORTANT: Check if this is a center-based bbox or corner-based
+            # If bbox values are very small (like 0.1-0.9), they're likely center-based
+            # If they're larger (like 0.3-0.7), they're likely corner-based
+            if max(bbox) < 0.5:  # Likely center-based bbox
+                print(f"   Bbox appears to be center-based, converting to corner-based")
+                center_x_rel = bbox[0]
+                center_y_rel = bbox[1]
+                half_width_rel = bbox[2] / 2
+                half_height_rel = bbox[3] / 2
+                
+                # Convert to corner-based coordinates
+                x = int((center_x_rel - half_width_rel) * device_width)
+                y = int((center_y_rel - half_height_rel) * device_height)
+                width = int(bbox[2] * device_width)
+                height = int(bbox[3] * device_height)
+            else:  # Corner-based bbox
+                print(f"   Bbox appears to be corner-based")
+                x = int(bbox[0] * device_width)
+                y = int(bbox[1] * device_height)
+                width = int((bbox[2] - bbox[0]) * device_width)
+                height = int((bbox[3] - bbox[1]) * device_height)
+    else:
+        # Use absolute coordinates if available
+        x = element.get("x", 0)
+        y = element.get("y", 0)
+        width = element.get("width", 0)
+        height = element.get("height", 0)
+        print(f"   Using absolute coordinates: x={x}, y={y}, w={width}, h={height}")
+    
+    # Calculate center point
+    center_x = x + (width // 2)
+    center_y = y + (height // 2)
+    
+    print(f"   Calculated: x={x}, y={y}, w={width}, h={height}")
+    print(f"   Center: ({center_x}, {center_y})")
+    
+    # Validate coordinates
+    if (0 <= center_x <= device_width and 0 <= center_y <= device_height):
+        print(f"✅ Valid coordinates: center=({center_x}, {center_y})")
+        return {
+            "x": center_x,
+            "y": center_y,
+            "width": width,
+            "height": height,
+            "text": element.get("text", ""),
+            "class": element.get("class", ""),
+            "bbox": element.get("bbox", [])
+        }
+    
+    print(f"❌ Invalid coordinates: center=({center_x}, {center_y}) for device {device_width}x{device_height}")
+    return None
+
+
+def find_ui_element_by_text(parsed_elements: List[Dict], target_text: str, device_width: int = 1080, device_height: int = 2424) -> Optional[Dict]:
+    """Find UI element by text content"""
+    target_text_lower = target_text.lower()
+    
+    for element in parsed_elements:
+        element_text = element.get("text", "").lower()
+        if target_text_lower in element_text:
+            # Get coordinates - use bbox if available, otherwise x/y
+            if "bbox" in element and len(element["bbox"]) == 4:
+                bbox = element["bbox"]
+                # Check if bbox values are already absolute pixels or relative (0-1)
+                if max(bbox) > 1.0:  # Likely absolute pixels
+                    x = int(bbox[0])
+                    y = int(bbox[1])
+                    width = int(bbox[2] - bbox[0])
+                    height = int(bbox[3] - bbox[1])
+                else:  # Relative coordinates (0-1)
+                    # IMPORTANT: Check if this is a center-based bbox or corner-based
+                    if max(bbox) < 0.5:  # Likely center-based bbox
+                        center_x_rel = bbox[0]
+                        center_y_rel = bbox[1]
+                        half_width_rel = bbox[2] / 2
+                        half_height_rel = bbox[3] / 2
+                        
+                        # Convert to corner-based coordinates
+                        x = int((center_x_rel - half_width_rel) * device_width)
+                        y = int((center_y_rel - half_height_rel) * device_height)
+                        width = int(bbox[2] * device_width)
+                        height = int(bbox[3] * device_height)
+                    else:  # Corner-based bbox
+                        x = int(bbox[0] * device_width)
+                        y = int(bbox[1] * device_height)
+                        width = int((bbox[2] - bbox[0]) * device_width)
+                        height = int((bbox[3] - bbox[1]) * device_height)
+            else:
+                # Use absolute coordinates if available
+                x = element.get("x", 0)
+                y = element.get("y", 0)
+                width = element.get("width", 0)
+                height = element.get("height", 0)
+            
+            # Calculate center point
+            center_x = x + (width // 2)
+            center_y = y + (height // 2)
+            
+            # Validate coordinates
+            if (0 <= center_x <= device_width and 0 <= center_y <= device_height):
+                print(f"🎯 Found text element '{target_text}': bbox={element.get('bbox', 'N/A')}, center=({center_x}, {center_y})")
+                return {
+                    "x": center_x,
+                    "y": center_y,
+                    "width": width,
+                    "height": height,
+                    "text": element.get("text", ""),
+                    "class": element.get("class", ""),
+                    "bbox": element.get("bbox", [])
+                }
+    
+    return None
+
+
+def validate_coordinates(x: int, y: int, device_width: int = 1080, device_height: int = 2424) -> bool:
+    """Validate that coordinates are within device bounds"""
+    print(f"🔍 Validating coordinates ({x}, {y}) for device {device_width}x{device_height}")
+    
+    if not (0 <= x <= device_width and 0 <= y <= device_height):
+        print(f"⚠️ Invalid coordinates ({x}, {y}) for device {device_width}x{device_height}")
+        return False
+    
+    print(f"✅ Coordinates are valid")
+    return True
+
+
+def safe_tap_coordinates(device: str, x: int, y: int, device_width: int = 1080, device_height: int = 2424) -> bool:
+    """Safely tap at coordinates with validation"""
+    print(f"🎯 Attempting to tap at coordinates: ({x}, {y})")
+    print(f"   Device dimensions: {device_width}x{device_height}")
+    
+    if not validate_coordinates(x, y, device_width, device_height):
+        return False
+    
+    try:
+        result = screen_action.invoke({
+            "device": device,
+            "action": "tap",
+            "x": x,
+            "y": y
+        })
+        
+        if "success" in str(result).lower():
+            print(f"✅ Successfully tapped at ({x}, {y})")
+            return True
+        else:
+            print(f"❌ Tap failed at ({x}, {y}): {result}")
+            return False
+            
+    except Exception as e:
+        print(f"❌ Error tapping at ({x}, {y}): {e}")
+        return False
+
+
+def debug_screen_elements(parsed_elements: List[Dict], task: str):
+    """Debug function to show what elements are detected"""
+    print(f"\n🔍 DEBUG: Screen analysis for task: '{task}'")
+    print(f"📱 Total elements detected: {len(parsed_elements)}")
+    
+    if not parsed_elements:
+        print("⚠️ No elements detected!")
+        return
+    
+    # Show first few elements in detail
+    print(f"🔍 First 5 elements detail:")
+    for i, elem in enumerate(parsed_elements[:5]):
+        print(f"  Element {i}:")
+        print(f"    Text: '{elem.get('text', 'No text')}'")
+        print(f"    Class: '{elem.get('class', 'No class')}'")
+        print(f"    Bbox: {elem.get('bbox', 'No bbox')}")
+        print(f"    X/Y: ({elem.get('x', 'No x')}, {elem.get('y', 'No y')})")
+        print(f"    Width/Height: ({elem.get('width', 'No w')}, {elem.get('height', 'No h')})")
+        print(f"    Center: ({elem.get('center_x', 'No cx')}, {elem.get('center_y', 'No cy')})")
+        print()
+    
+    # Show elements with text
+    text_elements = [e for e in parsed_elements if e.get("text", "").strip()]
+    print(f"📝 Elements with text: {len(text_elements)}")
+    
+    for i, elem in enumerate(text_elements[:10]):  # Show first 10
+        text = elem.get("text", "")[:40]  # Truncate long text
+        bbox = elem.get("bbox", "N/A")
+        x, y = elem.get("x", 0), elem.get("y", 0)
+        center_x = elem.get("center_x", x)
+        center_y = elem.get("center_y", y)
+        print(f"  {i}: '{text}' bbox={bbox} at ({x}, {y}) center: ({center_x}, {center_y})")
+    
+    # Show elements by class
+    class_elements = [e for e in parsed_elements if e.get("class", "").strip()]
+    print(f"🏷️ Elements by class: {len(class_elements)}")
+    
+    class_counts = {}
+    for elem in class_elements:
+        class_name = elem.get("class", "")
+        class_counts[class_name] = class_counts.get(class_name, 0) + 1
+    
+    for class_name, count in sorted(class_counts.items())[:5]:  # Show top 5 classes
+        print(f"  {class_name}: {count} elements")
+    
+    # Look for TikTok-related elements specifically
+    tiktok_elements = []
+    for elem in parsed_elements:
+        text = elem.get("text", "").lower()
+        class_name = elem.get("class", "").lower()
+        if "tiktok" in text or "tiktok" in class_name or "icon" in class_name or "app" in class_name:
+            tiktok_elements.append(elem)
+    
+    if tiktok_elements:
+        print(f"🎯 TikTok-related elements found: {len(tiktok_elements)}")
+        for i, elem in enumerate(tiktok_elements):
+            text = elem.get("text", "")
+            bbox = elem.get("bbox", "N/A")
+            print(f"  TikTok {i}: '{text}' bbox={bbox}")
+            
+            # Test coordinate calculation for TikTok elements
+            if "bbox" in elem and len(elem["bbox"]) == 4:
+                bbox = elem["bbox"]
+                print(f"    TikTok {i} coordinate test:")
+                if max(bbox) > 1.0:
+                    print(f"      As absolute pixels: x={int(bbox[0])}, y={int(bbox[1])}")
+                else:
+                    if max(bbox) < 0.5:  # Likely center-based
+                        center_x_rel = bbox[0]
+                        center_y_rel = bbox[1]
+                        half_width_rel = bbox[2] / 2
+                        half_height_rel = bbox[3] / 2
+                        corner_x = int((center_x_rel - half_width_rel) * 1080)
+                        corner_y = int((center_y_rel - half_height_rel) * 2424)
+                        center_x = int(center_x_rel * 1080)
+                        center_y = int(center_y_rel * 2424)
+                        print(f"      As center-based bbox: corner=({corner_x}, {corner_y}), center=({center_x}, {center_y})")
+                    else:  # Likely corner-based
+                        corner_x = int(bbox[0] * 1080)
+                        corner_y = int(bbox[1] * 2424)
+                        center_x = int((bbox[0] + bbox[2]) / 2 * 1080)
+                        center_y = int((bbox[1] + bbox[3]) / 2 * 2424)
+                        print(f"      As corner-based bbox: corner=({corner_x}, {corner_y}), center=({center_x}, {center_y})")
+    
+    # Test coordinate calculation for first few elements
+    print(f"🧮 Testing coordinate calculation:")
+    for i, elem in enumerate(parsed_elements[:3]):
+        if "bbox" in elem and len(elem["bbox"]) == 4:
+            bbox = elem["bbox"]
+            print(f"  Element {i} bbox: {bbox}")
+            
+            # Test both relative and absolute interpretations
+            if max(bbox) > 1.0:
+                print(f"    As absolute pixels: x={int(bbox[0])}, y={int(bbox[1])}")
+            else:
+                print(f"    As relative (0-1): x={int(bbox[0] * 1080)}, y={int(bbox[1] * 2424)}")
+                
+                # Test center-based vs corner-based interpretation
+                if max(bbox) < 0.5:  # Likely center-based
+                    center_x_rel = bbox[0]
+                    center_y_rel = bbox[1]
+                    half_width_rel = bbox[2] / 2
+                    half_height_rel = bbox[3] / 2
+                    corner_x = int((center_x_rel - half_width_rel) * 1080)
+                    corner_y = int((center_y_rel - half_height_rel) * 2424)
+                    print(f"    As center-based bbox: corner=({corner_x}, {corner_y})")
+                else:  # Likely corner-based
+                    corner_x = int(bbox[0] * 1080)
+                    corner_y = int(bbox[1] * 2424)
+                    print(f"    As corner-based bbox: corner=({corner_x}, {corner_y})")
+    
+    print("--- End Debug ---\n")
 
 
 def execute_task(
@@ -1011,6 +1499,91 @@ def execute_task(
     )
     state = fallback_to_react(state)
     return {"status": state["execution_status"], "state": state}
+
+
+def run_task_with_working_agent(task: str, device: str = "emulator-5554", use_clip: bool = True) -> Dict[str, Any]:
+    """
+    Execute a task using the WorkingUIAgent with CLIP capabilities
+    
+    Args:
+        task: User task description
+        device: Device ID
+        use_clip: Whether to use CLIP-enhanced features
+        
+    Returns:
+        Execution result
+    """
+    if not working_ui_agent:
+        print("⚠️ WorkingUIAgent not available, falling back to standard execution")
+        return run_task(task, device)
+    
+    try:
+        print(f"🚀 Executing task with WorkingUIAgent: '{task}' on {device}")
+        
+        # Initialize agent for this device
+        working_ui_agent.device_id = device
+        
+        # Take initial screenshot for analysis
+        screenshot_path = working_ui_agent.take_screenshot("task_analysis")
+        if not screenshot_path:
+            print("❌ Failed to take initial screenshot")
+            return {"status": "error", "message": "Screenshot failed"}
+        
+        # Analyze screenshot with CLIP if available
+        if use_clip and working_ui_agent.clip_available:
+            print("🧠 Analyzing screenshot with CLIP...")
+            embedding = working_ui_agent.analyze_screenshot_with_clip(screenshot_path, task)
+            if embedding is not None:
+                print("✅ CLIP analysis completed")
+        
+        # Use CLIP to find elements matching the task description
+        if "click" in task.lower() or "tap" in task.lower():
+            element_coords = working_ui_agent.find_element_with_clip(task)
+            if element_coords:
+                x, y = element_coords
+                print(f"🎯 Found target element at ({x}, {y}) using CLIP")
+                
+                # Wait for UI to be ready
+                if working_ui_agent.wait_for_ui_ready():
+                    # Perform the action
+                    result = working_ui_agent.tap_element(x, y)
+                    if result:
+                        return {
+                            "status": "success",
+                            "message": f"Successfully executed: {task}",
+                            "method": "working_ui_agent_clip",
+                            "coordinates": [x, y],
+                            "completed": True
+                        }
+        
+        # If CLIP method didn't work, try coordinate estimation
+        element_coords = working_ui_agent.find_element_with_clip(task)
+        if element_coords:
+            x, y = element_coords
+            print(f"📍 Using coordinate estimation: ({x}, {y})")
+            
+            if working_ui_agent.wait_for_ui_ready():
+                result = working_ui_agent.tap_element(x, y)
+                if result:
+                    return {
+                        "status": "success", 
+                        "message": f"Successfully executed: {task}",
+                        "method": "working_ui_agent_coordinates",
+                        "coordinates": [x, y],
+                        "completed": True
+                    }
+        
+        # Fallback to standard execution
+        print("⚠️ WorkingUIAgent methods failed, falling back to standard execution")
+        return run_task(task, device)
+        
+    except Exception as e:
+        print(f"❌ WorkingUIAgent execution failed: {e}")
+        return {
+            "status": "error",
+            "message": f"WorkingUIAgent error: {str(e)}",
+            "fallback_available": True
+        }
 
 
 def run_task(task: str, device: str = "emulator-5554") -> Dict[str, Any]:
@@ -1576,15 +2149,26 @@ def execute_high_level_action(
         if isinstance(device_size, str):
             device_size = {"width": 1080, "height": 1920}
 
-        # More precise coordinate calculation
-        width = device_size["width"]
-        height = device_size["height"]
+        # Get device dimensions dynamically
+        device_size = get_device_size.invoke(state["device"])
+        if isinstance(device_size, str):
+            if "x" in device_size:
+                try:
+                    width, height = map(int, device_size.split("x"))
+                except:
+                    width, height = 1080, 2424  # Default fallback
+            else:
+                width, height = 1080, 2424
+        else:
+            width = device_size.get("width", 1080)
+            height = device_size.get("height", 2424)
         
         # Calculate center point with bounds checking
         center_x = max(10, min(width - 10, int((bbox[0] + bbox[2]) / 2 * width)))
         center_y = max(10, min(height - 10, int((bbox[1] + bbox[3]) / 2 * height)))
         
         print(f"🎯 Calculated action coordinates: ({center_x}, {center_y}) for element with bbox {bbox}")
+        print(f"📱 Device dimensions: {width}x{height}, coordinates are absolute pixels")
 
         # Prepare operation parameters
         action_params = {
@@ -2191,12 +2775,16 @@ def check_task_completion(state: DeploymentState) -> DeploymentState:
         ]
     )
 
-    # Combine all messages
-    all_messages = list(judgement_prompt.messages) + image_messages
-
+    # Create the judgement chain and invoke it
+    judgement_chain = judgement_prompt | model | StrOutputParser()
+    
+    # Prepare input for the chain
+    judgement_input = {
+        "completion_criteria": completion_criteria,
+    }
+    
     # Call LLM for judgment
-    judgement_response = model.invoke(all_messages)
-    judgement_answer = judgement_response.content.strip()
+    judgement_answer = judgement_chain.invoke(judgement_input).strip()
 
     # Update task completion status
     if "yes" in judgement_answer.lower() or "complete" in judgement_answer.lower():

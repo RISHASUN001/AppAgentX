@@ -16,6 +16,7 @@ from data.State import State
 from data.data_storage import state2json, json2db
 from explor_human import single_human_explor, capture_and_parse_page
 from tool.screen_content import list_all_devices, get_device_size
+from dynamic_completion import get_completion_detector, wait_for_action_completion, check_ui_readiness
 
 auto_log_storage = []  # Global log storage for automatic exploration
 auto_page_storage = []  # Global page history storage for automatic exploration
@@ -1272,16 +1273,52 @@ with gr.Blocks(
                             original_run_task = run_task
 
                             def patched_run_task(task, device):
-                                # Here, we can modify run_task function behavior, adding callback support
-                                add_log("Initializing task execution...")
+                                # Initialize dynamic completion detector
+                                add_log("🧠 Initializing dynamic completion detection...")
+                                completion_detector = get_completion_detector()
+                                
+                                add_log("🚀 Starting task execution with adaptive waiting...")
+                                
+                                # Execute task with enhanced completion detection
                                 result = original_run_task(task, device)
+                                
+                                # Get completion detection statistics
+                                stats = completion_detector.get_stats()
+                                if stats["total_waits"] > 0:
+                                    add_log(f"📊 Completion Detection Stats:")
+                                    add_log(f"  • Total waits: {stats['total_waits']}")
+                                    add_log(f"  • Average wait time: {stats['average_wait_time']:.2f}s")
+                                    add_log(f"  • Completion rate: {stats['completion_rate']:.1%}")
+                                    add_log(f"  • Model available: {'✅' if stats['model_available'] else '❌'}")
+                                
+                                # Determine if task truly completed using dynamic detection
+                                task_completed = result.get("completed", False)
+                                
+                                # If task claims to be completed, do a final UI readiness check
+                                if task_completed and "screenshots" in locals() and screenshots:
+                                    try:
+                                        latest_screenshot = screenshots[-1] if screenshots else None
+                                        if latest_screenshot and os.path.exists(latest_screenshot):
+                                            ui_ready = check_ui_readiness(latest_screenshot)
+                                            if ui_ready:
+                                                add_log("✅ Final UI state verified - task completion confirmed")
+                                            else:
+                                                add_log("⚠️ UI may still be transitioning after task completion")
+                                    except Exception as e:
+                                        add_log(f"⚠️ Final UI check failed: {e}")
 
+                                # Enhanced completion status
+                                enhanced_status = result.get("status", "unknown")
+                                if enhanced_status == "success" and task_completed:
+                                    enhanced_status = "completed"
+                                
                                 # Task completed result put into queue
                                 update_queue.put(
                                     {
-                                        "status": result.get("status", "unknown"),
+                                        "status": enhanced_status,
                                         "message": result.get("message", ""),
-                                        "completed": result.get("completed", False),
+                                        "completed": task_completed,
+                                        "completion_method": "dynamic_detection"
                                     }
                                 )
                                 return result

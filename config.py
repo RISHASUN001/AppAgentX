@@ -41,6 +41,12 @@ Feature_URI = os.getenv("FEATURE_URI", "http://127.0.0.1:8001")
 
 # Screen Parser Configuration
 Omni_URI = os.getenv("OMNI_URI", "http://127.0.0.1:8000")
+CLIP_URI = os.getenv("CLIP_URI", "http://127.0.0.1:8002")  # Different port to avoid conflict
+
+# Parser Selection Configuration
+PARSER_TYPE = os.getenv("PARSER_TYPE", "auto")  # "omni", "clip", "auto"
+PRIMARY_PARSER = os.getenv("PRIMARY_PARSER", "omni")  # Primary choice
+FALLBACK_PARSER = os.getenv("FALLBACK_PARSER", "clip")  # Fallback choice
 
 # Vector Storage Configuration
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY", "")
